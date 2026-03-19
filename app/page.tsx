@@ -54,6 +54,7 @@ export default function Dashboard() {
   const [analyses, setAnalyses] = useState<Record<string, AnalysisState>>({})
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [copied, setCopied] = useState<Record<string, boolean>>({})
+  const [extraContext, setExtraContext] = useState<Record<string, string>>({})
 
   useEffect(() => {
     fetch('/api/fetch-feedback')
@@ -67,14 +68,14 @@ export default function Dashboard() {
       .finally(() => setLoading(false))
   }, [])
 
-  async function analyse(item: FeedbackItem) {
+  async function analyse(item: FeedbackItem, context?: string) {
     const key = item.feedback.id
     setAnalyses(a => ({ ...a, [key]: { status: 'loading' } }))
     try {
       const res = await fetch('/api/analyse-case', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ feedback: item.feedback, caseData: item.caseData }),
+        body: JSON.stringify({ feedback: item.feedback, caseData: item.caseData, extraContext: context ?? extraContext[key] ?? '' }),
       })
       const data = await res.json()
       if (data.error) throw new Error(data.error)
@@ -232,6 +233,20 @@ export default function Dashboard() {
                 <p className={styles.issueText}>{selectedItem.feedback.issueSummary}</p>
               </div>
 
+              <div className={styles.contextBox}>
+                <label className={styles.contextLabel} htmlFor="ctx-before">
+                  Additional context <span className={styles.contextHint}>(optional — add anything that might help the analysis before running it)</span>
+                </label>
+                <textarea
+                  id="ctx-before"
+                  className={styles.contextTextarea}
+                  placeholder="e.g. The user is referring specifically to the management section. The current guideline changed in 2024..."
+                  value={extraContext[selectedItem.feedback.id] ?? ""}
+                  onChange={e => setExtraContext(c => ({ ...c, [selectedItem.feedback.id]: e.target.value }))}
+                  rows={3}
+                />
+              </div>
+
               {selectedState?.status === 'error' && (
                 <div className={styles.inlineError}>
                   Analysis failed: {selectedState.message}
@@ -356,6 +371,28 @@ export default function Dashboard() {
                         <pre className={styles.emailText}>{analysis.emailResponse}</pre>
                       </div>
                     )}
+                  {/* Re-analyse with extra context */}
+                  <div className={styles.reanalyseBox}>
+                    <p className={styles.reanalyseTitle}>Refine this analysis</p>
+                    <p className={styles.reanalyseSubtitle}>Add extra context or corrections and re-run the analysis</p>
+                    <textarea
+                      className={styles.contextTextarea}
+                      placeholder="e.g. Please also check the BNF for drug interactions. The user is specifically referring to the 2025 NICE update..."
+                      value={extraContext[selectedItem.feedback.id] ?? ""}
+                      onChange={e => setExtraContext(c => ({ ...c, [selectedItem.feedback.id]: e.target.value }))}
+                      rows={3}
+                    />
+                    <button
+                      className={styles.reanalyseBtn}
+                      onClick={() => analyse(selectedItem)}
+                      disabled={selectedState?.status === 'loading'}
+                    >
+                      {selectedState?.status === 'loading' ? (
+                        <><span className={styles.btnSpinner} /> Analysing…</>
+                      ) : '↺ Re-analyse with this context'}
+                    </button>
+                  </div>
+
                   </>
                 )
               })()}
