@@ -97,10 +97,13 @@ export default function Dashboard() {
       <header className={styles.header}>
         <div className={styles.headerInner}>
           <div className={styles.logo}>
-            <span className={styles.logoMark}>✦</span>
-            <span className={styles.logoText}>ClawdBot</span>
+            <div className={styles.logoMark}>⚕</div>
+            <div>
+              <div className={styles.logoText}>SCA Revision Bot</div>
+              <div className={styles.logoSub}>Case Correction Review Tool</div>
+            </div>
           </div>
-          <p className={styles.headerSub}>MRCGP SCA Case Correction Review</p>
+          <span className={styles.headerBadge}>scarevision.co.uk</span>
         </div>
       </header>
 
