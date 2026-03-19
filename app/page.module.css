@@ -1,0 +1,469 @@
+/* page.module.css */
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=Outfit:wght@300;400;500;600&display=swap');
+
+.root {
+  min-height: 100vh;
+  background: #f4f1eb;
+  font-family: 'Outfit', sans-serif;
+}
+
+/* ── Header ── */
+.header {
+  background: #1a1a2e;
+  border-bottom: 3px solid #e8c547;
+  padding: 0;
+}
+
+.headerInner {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 32px;
+  display: flex;
+  align-items: baseline;
+  gap: 24px;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logoMark {
+  color: #e8c547;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.logoText {
+  font-family: 'DM Serif Display', serif;
+  font-size: 26px;
+  color: #fff;
+  letter-spacing: -0.5px;
+}
+
+.headerSub {
+  font-size: 13px;
+  color: #8b8ba7;
+  font-weight: 300;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+/* ── Main ── */
+.main {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 40px 32px 80px;
+}
+
+/* ── States ── */
+.stateBox {
+  text-align: center;
+  padding: 80px 32px;
+  color: #666;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #ddd;
+  border-top-color: #1a1a2e;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 16px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.emptyIcon {
+  font-size: 40px;
+  color: #16a34a;
+  margin-bottom: 12px;
+}
+
+.errorBox {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 12px;
+  padding: 24px;
+  color: #991b1b;
+}
+
+.errorBox strong { display: block; margin-bottom: 8px; }
+.errorBox p { margin: 4px 0; }
+
+.hint {
+  font-size: 13px;
+  color: #b91c1c;
+  font-family: 'DM Mono', monospace;
+  margin-top: 12px !important;
+  background: #fee2e2;
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+
+/* ── Queue bar ── */
+.queueBar {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #ddd8cc;
+}
+
+.queueCount {
+  font-family: 'DM Serif Display', serif;
+  font-size: 42px;
+  color: #1a1a2e;
+  line-height: 1;
+}
+
+.queueLabel {
+  font-size: 15px;
+  color: #666;
+  font-weight: 300;
+}
+
+/* ── Cards ── */
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.card {
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #e8e4da;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+}
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid #f0ece4;
+  background: #faf8f4;
+}
+
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.caseTag {
+  font-family: 'DM Serif Display', serif;
+  font-size: 18px;
+  color: #1a1a2e;
+}
+
+.contactTag {
+  font-size: 12px;
+  font-weight: 500;
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 20px;
+  padding: 3px 10px;
+}
+
+.warnTag {
+  font-size: 12px;
+  font-weight: 500;
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 20px;
+  padding: 3px 10px;
+}
+
+.analyseBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #1a1a2e;
+  color: #e8c547;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+
+.analyseBtn:hover { opacity: 0.85; }
+.analyseBtn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.btnSpinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(232,197,71,0.3);
+  border-top-color: #e8c547;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* ── Issue text ── */
+.issueBox {
+  padding: 20px 24px;
+  border-bottom: 1px solid #f0ece4;
+}
+
+.issueLabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #999;
+  font-weight: 500;
+  margin: 0 0 8px;
+}
+
+.issueText {
+  font-size: 15px;
+  color: #333;
+  line-height: 1.65;
+  margin: 0;
+}
+
+.inlineError {
+  margin: 16px 24px;
+  padding: 12px 16px;
+  background: #fef2f2;
+  border-radius: 8px;
+  color: #dc2626;
+  font-size: 14px;
+}
+
+/* ── Results ── */
+.results {
+  padding: 0 24px 24px;
+}
+
+/* Verdict banner */
+.verdictBanner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid;
+  margin: 20px 0;
+  flex-wrap: wrap;
+}
+
+.verdictDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.verdictBanner strong {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.verdictReason {
+  font-size: 14px;
+  color: #444;
+  line-height: 1.5;
+}
+
+/* ── Sections ── */
+.section {
+  margin-top: 24px;
+}
+
+.sectionTitle {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #999;
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+
+.summaryText {
+  font-size: 15px;
+  line-height: 1.7;
+  color: #333;
+  margin: 0;
+}
+
+.noChanges {
+  font-size: 14px;
+  color: #16a34a;
+  font-style: italic;
+  margin: 0;
+}
+
+/* Sources */
+.sourceList {
+  margin: 0;
+  padding: 0 0 0 18px;
+  list-style: disc;
+}
+
+.sourceList li {
+  font-size: 13px;
+  color: #555;
+  font-family: 'DM Mono', monospace;
+  margin-bottom: 4px;
+}
+
+/* ── Field changes ── */
+.fieldChanges {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.fieldCard {
+  border: 1px solid #e8e4da;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.fieldCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: #faf8f4;
+  border-bottom: 1px solid #e8e4da;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.fieldName {
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'DM Mono', monospace;
+  color: #1a1a2e;
+}
+
+.confidencePill {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.fieldIssue {
+  font-size: 13px;
+  color: #666;
+  padding: 12px 16px 0;
+  margin: 0;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.diffRow {
+  display: grid;
+  grid-template-columns: 1fr 24px 1fr;
+  align-items: start;
+  gap: 8px;
+  padding: 12px 16px 16px;
+}
+
+.diffArrow {
+  text-align: center;
+  color: #999;
+  padding-top: 28px;
+  font-size: 16px;
+}
+
+.diffBox {
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.diffBefore {
+  background: #fff5f5;
+  border: 1px solid #fecaca;
+}
+
+.diffAfter {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
+.diffLabel {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 600;
+  color: #999;
+  margin-bottom: 6px;
+}
+
+.diffBox p {
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+  color: #333;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Email ── */
+.emailHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.emailHeader .sectionTitle {
+  margin-bottom: 0;
+}
+
+.copyBtn {
+  font-size: 13px;
+  font-weight: 500;
+  font-family: 'Outfit', sans-serif;
+  color: #1a1a2e;
+  background: #f0ece4;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.copyBtn:hover { background: #e8e4da; }
+
+.emailTo {
+  font-size: 13px;
+  color: #555;
+  font-family: 'DM Mono', monospace;
+  margin: 0 0 10px;
+}
+
+.emailText {
+  font-size: 14px;
+  font-family: 'Outfit', sans-serif;
+  line-height: 1.75;
+  color: #333;
+  background: #faf8f4;
+  border: 1px solid #e8e4da;
+  border-radius: 10px;
+  padding: 20px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
