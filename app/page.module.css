@@ -15,8 +15,6 @@
   --text-body: #2d3748;
 }
 
-* { box-sizing: border-box; }
-
 .root {
   min-height: 100vh;
   background: var(--off-white);
