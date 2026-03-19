@@ -79,10 +79,16 @@ Please:
 
     const data = await response.json()
 
-    // Extract the text content block (Claude may also return tool_use blocks)
     const textBlock = data.content?.find((b: any) => b.type === 'text')
     if (!textBlock) {
-      return NextResponse.json({ error: 'No text response from Claude', raw: data }, { status: 500 })
+      return NextResponse.json({ 
+        error: 'No text response from Claude', 
+        type: data.type,
+        stop_reason: data.stop_reason,
+        error_details: data.error,
+        content_types: data.content?.map((b: any) => b.type),
+        raw: data 
+      }, { status: 500 })
     }
 
     // Strip any accidental markdown fences
