@@ -91,7 +91,7 @@ Please take this additional context into account in your analysis.` : ''}`
         'Authorization': `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'gpt-5.4',
+        model: 'gpt-5.4-mini',
         tools: [{ type: 'web_search_preview' }],
         instructions,
         input: userPrompt,
