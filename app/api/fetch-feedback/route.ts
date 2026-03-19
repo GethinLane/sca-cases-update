@@ -24,7 +24,11 @@ async function batchFetch(items: any[], batchSize = 4, delayMs = 300) {
 export async function GET() {
   try {
     const feedback = await getAllFeedback()
-    const joined = await batchFetch(feedback)
+    const joined = (await batchFetch(feedback)).sort((a, b) => {
+      const numA = parseInt(a.feedback.caseNumber) || 0
+      const numB = parseInt(b.feedback.caseNumber) || 0
+      return numA - numB
+    })
     return NextResponse.json({ items: joined })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
