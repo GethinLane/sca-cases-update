@@ -15,6 +15,7 @@
   --text-body: #2d3748;
 }
 
+
 .root {
   min-height: 100vh;
   background: var(--off-white);
@@ -518,3 +519,92 @@
 
 .searchUrlHighlight { color: #16a34a !important; font-weight: 600; }
 .searchUrlHighlight a { color: #16a34a !important; }
+
+/* ── Context & re-analyse boxes ── */
+.contextBox {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent-light);
+  border-radius: 0 10px 10px 0;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+}
+
+.contextLabel {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--navy);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 8px;
+}
+
+.contextHint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.contextTextarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-family: 'Nunito Sans', sans-serif;
+  color: var(--text-body);
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s;
+  background: #fafbfd;
+}
+
+.contextTextarea:focus {
+  border-color: var(--accent);
+  background: #fff;
+}
+
+.reanalyseBox {
+  margin-top: 32px;
+  padding: 24px;
+  background: #f0f5fb;
+  border: 1px solid #c5d8f0;
+  border-radius: 12px;
+}
+
+.reanalyseTitle {
+  font-family: 'Playfair Display', serif;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--navy);
+  margin: 0 0 4px;
+}
+
+.reanalyseSubtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 14px;
+}
+
+.reanalyseBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  background: var(--navy);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 22px;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: 'Nunito Sans', sans-serif;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.reanalyseBtn:hover { background: var(--accent); }
+.reanalyseBtn:disabled { opacity: 0.6; cursor: not-allowed; }
