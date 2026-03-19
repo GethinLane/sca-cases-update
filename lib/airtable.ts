@@ -31,7 +31,7 @@ export interface FeedbackRow {
 export async function getAllFeedback(): Promise<FeedbackRow[]> {
   // Table is named "User Feedback" in the feedback base
   const encoded = encodeURIComponent('User Feedback')
-  const url = `${AT_BASE}/${FEEDBACK_BASE_ID}/${encoded}?filterByFormula=NOT({Issue Summary}="")`
+  const url = `${AT_BASE}/${FEEDBACK_BASE_ID}/${encoded}?filterByFormula=AND(NOT({Issue Summary}=""),OR({Suggestion Status}="Todo",{Suggestion Status}=""))`
   const data = await airtableFetch(url)
 
   return (data.records || []).map((r: any) => ({
