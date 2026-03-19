@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {
-  const { feedback, caseData } = await req.json()
+  const { feedback, caseData, extraContext } = await req.json()
 
   if (!feedback || !caseData) {
     return NextResponse.json({ error: 'Missing feedback or caseData' }, { status: 400 })
@@ -59,7 +59,14 @@ Please:
 2. Search the web to verify any clinical claims against current UK guidelines (NICE, RCGP, BNF).
 3. Identify which specific fields in the case need changing, if any.
 4. For each field that needs changing, provide the current text and your suggested replacement.
-5. Draft a response email for the user ${feedback.contactEmail ? `(their email: ${feedback.contactEmail})` : '(no contact requested)'}.`
+5. Draft a response email for the user ${feedback.contactEmail ? `(their email: ${feedback.contactEmail})` : '(no contact requested)'}.
+${extraContext ? `
+---
+
+ADDITIONAL CONTEXT FROM REVIEWER:
+${extraContext}
+
+Please take this additional context into account in your analysis.` : ''}`
 
   try {
     const response = await fetch('https://api.openai.com/v1/responses', {
