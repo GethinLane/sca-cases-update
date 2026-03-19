@@ -8,9 +8,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing feedback or caseData' }, { status: 400 })
   }
 
-  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
-  if (!ANTHROPIC_API_KEY) {
-    return NextResponse.json({ error: 'ANTHROPIC_API_KEY environment variable is not set' }, { status: 500 })
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY
+  if (!OPENAI_API_KEY) {
+    return NextResponse.json({ error: 'OPENAI_API_KEY environment variable is not set' }, { status: 500 })
   }
 
   // Build case content, capped to avoid token limits
@@ -19,8 +19,8 @@ export async function POST(req: NextRequest) {
     .join('\n\n---\n\n')
     .slice(0, 30000)
 
-  const systemPrompt = `You are a medical education quality reviewer for MRCGP SCA (Simulated Consultation Assessment) exam cases. 
-Your job is to assess user-submitted corrections or issues against the actual case content, verify them against current UK clinical guidelines (NICE, RCGP, BNF), and produce structured recommendations.
+  const instructions = `You are a medical education quality reviewer for MRCGP SCA (Simulated Consultation Assessment) exam cases.
+Your job is to assess user-submitted corrections or issues against the actual case content, verify them against current UK clinical guidelines (NICE, RCGP, BNF) using web search, and produce structured recommendations.
 
 You must respond ONLY with a valid JSON object — no markdown, no preamble, no explanation outside the JSON.
 
@@ -62,57 +62,51 @@ Please:
 5. Draft a response email for the user ${feedback.contactEmail ? `(their email: ${feedback.contactEmail})` : '(no contact requested)'}.`
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 4000,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }],
+        model: 'gpt-5.4',
+        tools: [{ type: 'web_search_preview' }],
+        instructions,
+        input: userPrompt,
       }),
     })
 
     const data = await response.json()
 
-    // Log for debugging
-    console.log('Anthropic status:', response.status)
-    console.log('Anthropic type:', data.type)
-    console.log('Anthropic stop_reason:', data.stop_reason)
-    console.log('Anthropic content types:', data.content?.map((b: any) => b.type))
-    if (data.error) console.log('Anthropic error:', JSON.stringify(data.error))
+    console.log('OpenAI status:', response.status)
+    console.log('OpenAI error:', data.error)
 
-    // Handle API-level errors
-    if (data.type === 'error') {
+    if (data.error) {
       return NextResponse.json({
-        error: `Anthropic API error: ${data.error?.type} — ${data.error?.message}`
+        error: `OpenAI API error: ${data.error.code} — ${data.error.message}`
       }, { status: 500 })
     }
 
-    // Find the final text block (may come after tool_use blocks)
-    const textBlock = data.content?.find((b: any) => b.type === 'text')
-    if (!textBlock) {
+    // Extract text output from the responses API
+    const textOutput = data.output?.find((o: any) => o.type === 'message')
+      ?.content?.find((c: any) => c.type === 'output_text')?.text
+
+    if (!textOutput) {
       return NextResponse.json({
-        error: 'No text response from Claude',
-        stop_reason: data.stop_reason,
-        content_types: data.content?.map((b: any) => b.type),
+        error: 'No text response from OpenAI',
+        output_types: data.output?.map((o: any) => o.type),
       }, { status: 500 })
     }
 
     // Strip any accidental markdown fences
-    const clean = textBlock.text.replace(/```json|```/g, '').trim()
+    const clean = textOutput.replace(/```json|```/g, '').trim()
 
     try {
       const parsed = JSON.parse(clean)
       return NextResponse.json(parsed)
     } catch {
       return NextResponse.json({
-        error: 'Claude response was not valid JSON',
+        error: 'Response was not valid JSON',
         raw_text: clean.slice(0, 500)
       }, { status: 500 })
     }
