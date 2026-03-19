@@ -98,12 +98,27 @@ Please:
       }, { status: 500 })
     }
 
+    // Extract web search activity from output blocks
+    const searchActivity: { query: string; urls: string[]; niceCksHit: boolean }[] = []
+    for (const block of data.output ?? []) {
+      if (block.type === 'web_search_call') {
+        searchActivity.push({ query: block.query ?? '(unknown query)', urls: [], niceCksHit: false })
+      }
+      if (block.type === 'web_search_result' && searchActivity.length > 0) {
+        const urls: string[] = block.results?.map((r: any) => r.url ?? r.link ?? '') ?? []
+        const niceCksHit = urls.some((u: string) => u.includes('cks.nice.org.uk') || u.includes('nice.org.uk'))
+        const last = searchActivity[searchActivity.length - 1]
+        last.urls = urls
+        last.niceCksHit = niceCksHit
+      }
+    }
+
     // Strip any accidental markdown fences
     const clean = textOutput.replace(/```json|```/g, '').trim()
 
     try {
       const parsed = JSON.parse(clean)
-      return NextResponse.json(parsed)
+      return NextResponse.json({ ...parsed, searchActivity })
     } catch {
       return NextResponse.json({
         error: 'Response was not valid JSON',
