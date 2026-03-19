@@ -25,6 +25,12 @@ interface FieldChange {
   confidence: 'high' | 'medium' | 'low'
 }
 
+interface SearchEntry {
+  query: string
+  urls: string[]
+  niceCksHit: boolean
+}
+
 interface Analysis {
   verdict: 'valid' | 'invalid' | 'partial' | 'uncertain'
   verdictReason: string
@@ -32,6 +38,7 @@ interface Analysis {
   sources: string[]
   fieldChanges: FieldChange[]
   emailResponse: string
+  searchActivity?: SearchEntry[]
 }
 
 type AnalysisState =
@@ -250,6 +257,39 @@ export default function Dashboard() {
                       <span className={styles.sectionTitle}>Summary</span>
                       <p className={styles.summaryText}>{analysis.summary}</p>
                     </div>
+
+                    {/* Search activity */}
+                    {analysis.searchActivity && analysis.searchActivity.length > 0 && (
+                      <div className={styles.section}>
+                        <span className={styles.sectionTitle}>Web search activity</span>
+                        <div className={styles.searchActivity}>
+                          {analysis.searchActivity.map((s, i) => (
+                            <div key={i} className={styles.searchEntry}>
+                              <div className={styles.searchQuery}>
+                                <span className={styles.searchIcon}>🔍</span>
+                                <span>{s.query}</span>
+                              </div>
+                              <div className={styles.searchNice}>
+                                {s.niceCksHit ? (
+                                  <span className={styles.niceHit}>✅ NICE CKS accessed</span>
+                                ) : (
+                                  <span className={styles.niceMiss}>⚠ NICE CKS not found in results</span>
+                                )}
+                              </div>
+                              {s.urls.length > 0 && (
+                                <ul className={styles.searchUrls}>
+                                  {s.urls.slice(0, 5).map((url, j) => (
+                                    <li key={j} className={url.includes('nice.org.uk') ? styles.searchUrlHighlight : ''}>
+                                      <a href={url} target="_blank" rel="noopener noreferrer">{url}</a>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {analysis.sources?.length > 0 && (
                       <div className={styles.section}>
