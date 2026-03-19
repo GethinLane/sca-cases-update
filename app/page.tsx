@@ -25,20 +25,31 @@ interface FieldChange {
   confidence: 'high' | 'medium' | 'low'
 }
 
-interface SearchEntry {
-  query: string
-  urls: string[]
-  niceCksHit: boolean
+interface SourceEntry {
+  title: string
+  url: string
+  finding: string
+}
+
+interface Verification {
+  citedUrls: string[]
+  searchQueries: string[]
+  niceCksVerified: boolean
+  niceVerified: boolean
+  niceCksUrls: string[]
+  niceUrls: string[]
 }
 
 interface Analysis {
   verdict: 'valid' | 'invalid' | 'partial' | 'uncertain'
   verdictReason: string
   summary: string
-  sources: string[]
+  sources: SourceEntry[] | string[]
   fieldChanges: FieldChange[]
   emailResponse: string
-  searchActivity?: SearchEntry[]
+  _verification?: Verification
+  // Legacy field — kept for backwards compatibility
+  searchActivity?: { query: string; urls: string[]; niceCksHit: boolean }[]
 }
 
 type AnalysisState =
@@ -46,6 +57,20 @@ type AnalysisState =
   | { status: 'loading' }
   | { status: 'done'; data: Analysis }
   | { status: 'error'; message: string }
+
+/** Check if sources array contains the new object format */
+function isStructuredSources(sources: any[]): sources is SourceEntry[] {
+  return sources.length > 0 && typeof sources[0] === 'object' && 'url' in sources[0]
+}
+
+/** Highlight domain in a URL for quick scanning */
+function urlDomain(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return url
+  }
+}
 
 export default function Dashboard() {
   const [items, setItems] = useState<FeedbackItem[]>([])
@@ -55,6 +80,7 @@ export default function Dashboard() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [copied, setCopied] = useState<Record<string, boolean>>({})
   const [extraContext, setExtraContext] = useState<Record<string, string>>({})
+  const [showQueries, setShowQueries] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     fetch('/api/fetch-feedback')
@@ -301,51 +327,118 @@ export default function Dashboard() {
                     <p className={styles.summaryText}>{selectedState.data.summary}</p>
                   </div>
 
-                  {/* Web search activity */}
-                  {selectedState.data.searchActivity && selectedState.data.searchActivity.length > 0 && (
-                    <div className={styles.section}>
-                      <span className={styles.sectionTitle}>Web search activity</span>
-                      <div className={styles.searchActivity}>
-                        {selectedState.data.searchActivity.map((s, i) => (
-                          <div key={i} className={styles.searchEntry}>
-                            <div className={styles.searchQuery}>
-                              <span className={styles.searchIcon}>🔍</span>
-                              <span>{s.query}</span>
-                            </div>
-                            <div className={styles.searchNice}>
-                              {s.niceCksHit ? (
-                                <span className={styles.niceHit}>✅ NICE CKS accessed</span>
-                              ) : (
-                                <span className={styles.niceMiss}>⚠ NICE CKS not found in results</span>
+                  {/* ── Sources & Verification (new) ── */}
+                  <div className={styles.section}>
+                    <span className={styles.sectionTitle}>Sources & verification</span>
+
+                    {/* Verification badges */}
+                    {selectedState.data._verification && (
+                      <div className={styles.verificationBar}>
+                        {selectedState.data._verification.niceCksVerified ? (
+                          <span className={styles.verifiedBadge}>
+                            ✅ NICE CKS verified — accessed {selectedState.data._verification.niceCksUrls.length} page{selectedState.data._verification.niceCksUrls.length !== 1 ? 's' : ''}
+                          </span>
+                        ) : selectedState.data._verification.niceVerified ? (
+                          <span className={styles.partialBadge}>
+                            ⚠ NICE accessed but not CKS specifically — {selectedState.data._verification.niceUrls.length} NICE page{selectedState.data._verification.niceUrls.length !== 1 ? 's' : ''}
+                          </span>
+                        ) : (
+                          <span className={styles.unverifiedBadge}>
+                            ❌ No NICE pages found in cited URLs — sources may be from model memory
+                          </span>
+                        )}
+                        <span className={styles.urlCountBadge}>
+                          {selectedState.data._verification.citedUrls.length} URL{selectedState.data._verification.citedUrls.length !== 1 ? 's' : ''} cited
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Structured sources (new format: objects with url/title/finding) */}
+                    {selectedState.data.sources?.length > 0 && isStructuredSources(selectedState.data.sources) && (
+                      <div className={styles.sourcesGrid}>
+                        {selectedState.data.sources.map((src, i) => {
+                          const domain = urlDomain(src.url)
+                          const isNiceCks = domain.includes('cks.nice.org.uk')
+                          const isNice = domain.includes('nice.org.uk')
+                          return (
+                            <div
+                              key={i}
+                              className={`${styles.sourceCard} ${isNiceCks ? styles.sourceCardNiceCks : isNice ? styles.sourceCardNice : ''}`}
+                            >
+                              <div className={styles.sourceCardHeader}>
+                                <span className={styles.sourceCardTitle}>{src.title}</span>
+                                <span className={styles.sourceCardDomain}>{domain}</span>
+                              </div>
+                              <a
+                                href={src.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className={styles.sourceCardUrl}
+                              >
+                                {src.url}
+                              </a>
+                              {src.finding && (
+                                <p className={styles.sourceCardFinding}>{src.finding}</p>
                               )}
                             </div>
-                            {s.urls.length > 0 && (
-                              <ul className={styles.searchUrls}>
-                                {s.urls.slice(0, 5).map((url, j) => (
-                                  <li
-                                    key={j}
-                                    className={url.includes('nice.org.uk') ? styles.searchUrlHighlight : ''}
-                                  >
-                                    <a href={url} target="_blank" rel="noopener noreferrer">{url}</a>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {/* Sources */}
-                  {selectedState.data.sources?.length > 0 && (
-                    <div className={styles.section}>
-                      <span className={styles.sectionTitle}>Sources consulted</span>
+                    {/* Legacy sources (plain strings) — backwards compatible */}
+                    {selectedState.data.sources?.length > 0 && !isStructuredSources(selectedState.data.sources) && (
                       <ul className={styles.sourceList}>
-                        {selectedState.data.sources.map((s, i) => <li key={i}>{s}</li>)}
+                        {(selectedState.data.sources as string[]).map((s, i) => <li key={i}>{s}</li>)}
                       </ul>
-                    </div>
-                  )}
+                    )}
+
+                    {/* All cited URLs from annotations (ground truth) */}
+                    {selectedState.data._verification && selectedState.data._verification.citedUrls.length > 0 && (
+                      <div className={styles.citedUrlsSection}>
+                        <span className={styles.citedUrlsTitle}>
+                          All URLs accessed during web search ({selectedState.data._verification.citedUrls.length})
+                        </span>
+                        <ul className={styles.citedUrlsList}>
+                          {selectedState.data._verification.citedUrls.map((url, i) => {
+                            const domain = urlDomain(url)
+                            const isNice = domain.includes('nice.org.uk')
+                            return (
+                              <li key={i} className={isNice ? styles.citedUrlNice : ''}>
+                                <span className={styles.citedUrlDomain}>{domain}</span>
+                                <a href={url} target="_blank" rel="noopener noreferrer">{url}</a>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Search queries (collapsible) */}
+                    {selectedState.data._verification && selectedState.data._verification.searchQueries.length > 0 && (
+                      <div className={styles.searchQueriesSection}>
+                        <button
+                          className={styles.searchQueriesToggle}
+                          onClick={() =>
+                            setShowQueries(q => ({
+                              ...q,
+                              [selectedItem.feedback.id]: !q[selectedItem.feedback.id],
+                            }))
+                          }
+                        >
+                          {showQueries[selectedItem.feedback.id] ? '▾' : '▸'}{' '}
+                          Search queries made ({selectedState.data._verification.searchQueries.length})
+                        </button>
+                        {showQueries[selectedItem.feedback.id] && (
+                          <ul className={styles.searchQueriesList}>
+                            {selectedState.data._verification.searchQueries.map((q, i) => (
+                              <li key={i}>🔍 {q}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+                  </div>
 
                   {/* Field changes */}
                   <div className={styles.section}>
