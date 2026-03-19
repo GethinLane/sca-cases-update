@@ -100,34 +100,60 @@ Please:
 
     // Extract web search activity from output blocks
     const searchActivity: { query: string; urls: string[]; niceCksHit: boolean }[] = []
-    
     for (const block of data.output ?? []) {
       if (block.type === 'web_search_call') {
-        searchActivity.push({
-          query: block.action?.query ?? '(unknown query)',
-          urls: [],
-          niceCksHit: false,
-        })
+        // query can be at block.query or block.action.query depending on model
+        const query = block.query ?? block.action?.query ?? block.input ?? JSON.stringify(block).slice(0, 80)
+        searchActivity.push({ query, urls: [], niceCksHit: false })
       }
+      // URLs come from url_citation annotations on message content blocks
       if (block.type === 'message') {
-        // URLs come from url_citation annotations on message content
         const urls: string[] = []
         for (const content of block.content ?? []) {
           for (const annotation of content.annotations ?? []) {
-            if (annotation.type === 'url_citation' && annotation.url) {
-              urls.push(annotation.url)
-            }
+            if (annotation.url) urls.push(annotation.url)
           }
+          // Also check text for nice.org.uk mentions directly
         }
         const niceCksHit = urls.some((u: string) =>
-          u.includes('cks.nice.org.uk') || u.includes('nice.org.uk')
+          u.includes('cks.nice.org.uk') ||
+          u.includes('nice.org.uk') ||
+          u.toLowerCase().includes('nice')
         )
         if (searchActivity.length > 0) {
           const last = searchActivity[searchActivity.length - 1]
-          last.urls = urls
-          last.niceCksHit = niceCksHit
+          last.urls = [...last.urls, ...urls]
+          if (niceCksHit) last.niceCksHit = true
         }
       }
+      // Also handle legacy web_search_result block format
+      if (block.type === 'web_search_result' && searchActivity.length > 0) {
+        const urls: string[] = block.results?.map((r: any) => r.url ?? r.link ?? '') ?? []
+        const niceCksHit = urls.some((u: string) => u.includes('nice.org.uk') || u.toLowerCase().includes('nice'))
+        const last = searchActivity[searchActivity.length - 1]
+        last.urls = [...last.urls, ...urls]
+        if (niceCksHit) last.niceCksHit = true
+      }
+    }
+    // Also scan ALL annotations across the entire output for NICE hits
+    // and assign to the most recent search that doesn't yet have a NICE hit
+    for (const block of data.output ?? []) {
+      if (block.type === 'message') {
+        for (const content of block.content ?? []) {
+          for (const annotation of content.annotations ?? []) {
+            if (annotation.url?.includes('nice.org.uk')) {
+              // Mark all searches as having accessed NICE if it appeared anywhere
+              for (const s of searchActivity) {
+                if (!s.urls.includes(annotation.url)) s.urls.push(annotation.url)
+              }
+            }
+          }
+        }
+      }
+    }
+    // Final pass: update niceCksHit based on accumulated urls
+    for (const s of searchActivity) {
+      s.niceCksHit = s.urls.some((u: string) => u.includes('nice.org.uk'))
     }
 
     // Strip any accidental markdown fences
