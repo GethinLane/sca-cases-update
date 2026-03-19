@@ -100,16 +100,33 @@ Please:
 
     // Extract web search activity from output blocks
     const searchActivity: { query: string; urls: string[]; niceCksHit: boolean }[] = []
+    
     for (const block of data.output ?? []) {
       if (block.type === 'web_search_call') {
-        searchActivity.push({ query: block.query ?? '(unknown query)', urls: [], niceCksHit: false })
+        searchActivity.push({
+          query: block.action?.query ?? '(unknown query)',
+          urls: [],
+          niceCksHit: false,
+        })
       }
-      if (block.type === 'web_search_result' && searchActivity.length > 0) {
-        const urls: string[] = block.results?.map((r: any) => r.url ?? r.link ?? '') ?? []
-        const niceCksHit = urls.some((u: string) => u.includes('cks.nice.org.uk') || u.includes('nice.org.uk'))
-        const last = searchActivity[searchActivity.length - 1]
-        last.urls = urls
-        last.niceCksHit = niceCksHit
+      if (block.type === 'message') {
+        // URLs come from url_citation annotations on message content
+        const urls: string[] = []
+        for (const content of block.content ?? []) {
+          for (const annotation of content.annotations ?? []) {
+            if (annotation.type === 'url_citation' && annotation.url) {
+              urls.push(annotation.url)
+            }
+          }
+        }
+        const niceCksHit = urls.some((u: string) =>
+          u.includes('cks.nice.org.uk') || u.includes('nice.org.uk')
+        )
+        if (searchActivity.length > 0) {
+          const last = searchActivity[searchActivity.length - 1]
+          last.urls = urls
+          last.niceCksHit = niceCksHit
+        }
       }
     }
 
