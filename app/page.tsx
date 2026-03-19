@@ -68,14 +68,18 @@ export default function Dashboard() {
       .finally(() => setLoading(false))
   }, [])
 
-  async function analyse(item: FeedbackItem, context?: string) {
+  async function analyse(item: FeedbackItem) {
     const key = item.feedback.id
     setAnalyses(a => ({ ...a, [key]: { status: 'loading' } }))
     try {
       const res = await fetch('/api/analyse-case', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ feedback: item.feedback, caseData: item.caseData, extraContext: context ?? extraContext[key] ?? '' }),
+        body: JSON.stringify({
+          feedback: item.feedback,
+          caseData: item.caseData,
+          extraContext: extraContext[key] ?? '',
+        }),
       })
       const data = await res.json()
       if (data.error) throw new Error(data.error)
@@ -92,10 +96,10 @@ export default function Dashboard() {
   }
 
   const verdictConfig = {
-    valid:    { label: 'Valid correction',    color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' },
-    invalid:  { label: 'Not valid',           color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
-    partial:  { label: 'Partially valid',     color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
-    uncertain:{ label: 'Uncertain',           color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' },
+    valid:     { label: 'Valid correction',  color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' },
+    invalid:   { label: 'Not valid',         color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
+    partial:   { label: 'Partially valid',   color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
+    uncertain: { label: 'Uncertain',         color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' },
   }
 
   const confidenceConfig = {
@@ -109,6 +113,8 @@ export default function Dashboard() {
 
   return (
     <div className={styles.root}>
+
+      {/* ── Header ── */}
       <header className={styles.header}>
         <div className={styles.headerInner}>
           <div className={styles.logo}>
@@ -133,7 +139,9 @@ export default function Dashboard() {
             ) : (
               <>
                 <div className={styles.sidebarCount}>{items.length}</div>
-                <div className={styles.sidebarCountLabel}>{items.length === 1 ? 'submission' : 'submissions'}</div>
+                <div className={styles.sidebarCountLabel}>
+                  {items.length === 1 ? 'submission' : 'submissions'}
+                </div>
               </>
             )}
           </div>
@@ -181,6 +189,7 @@ export default function Dashboard() {
 
         {/* ── Main content ── */}
         <main className={styles.content}>
+
           {loading && (
             <div className={styles.stateBox}>
               <div className={styles.spinner} />
@@ -192,7 +201,9 @@ export default function Dashboard() {
             <div className={styles.errorBox}>
               <strong>Failed to load feedback</strong>
               <p>{error}</p>
-              <p className={styles.hint}>Check: AIRTABLE_TOKEN, AIRTABLE_FEEDBACK_BASE_ID, AIRTABLE_CASES_BASE_ID</p>
+              <p className={styles.hint}>
+                Check: AIRTABLE_TOKEN, AIRTABLE_FEEDBACK_BASE_ID, AIRTABLE_CASES_BASE_ID
+              </p>
             </div>
           )}
 
@@ -200,13 +211,16 @@ export default function Dashboard() {
             <div className={styles.emptyState}>
               <div className={styles.emptyStateIcon}>📋</div>
               <div className={styles.emptyStateText}>
-                {items.length === 0 ? 'No pending submissions — all clear!' : 'Select a submission from the sidebar'}
+                {items.length === 0
+                  ? 'No pending submissions — all clear!'
+                  : 'Select a submission from the sidebar'}
               </div>
             </div>
           )}
 
           {!loading && !error && selectedItem && (
             <>
+              {/* Case header */}
               <div className={styles.caseHeader}>
                 <div className={styles.caseTitleGroup}>
                   <h1 className={styles.caseTitle}>Case {selectedItem.feedback.caseNumber || '?'}</h1>
@@ -224,178 +238,206 @@ export default function Dashboard() {
                 >
                   {selectedState?.status === 'loading' ? (
                     <><span className={styles.btnSpinner} /> Analysing…</>
-                  ) : selectedState?.status === 'done' ? '↺ Re-analyse' : '⚡ Analyse with GPT'}
+                  ) : selectedState?.status === 'done'
+                    ? '↺ Re-analyse'
+                    : '⚡ Analyse with GPT'}
                 </button>
               </div>
 
+              {/* Submitted feedback */}
               <div className={styles.issueBox}>
                 <p className={styles.issueLabel}>Submitted feedback</p>
                 <p className={styles.issueText}>{selectedItem.feedback.issueSummary}</p>
               </div>
 
+              {/* Context box — before analysis */}
               <div className={styles.contextBox}>
                 <label className={styles.contextLabel} htmlFor="ctx-before">
-                  Additional context <span className={styles.contextHint}>(optional — add anything that might help the analysis before running it)</span>
+                  Additional context{' '}
+                  <span className={styles.contextHint}>
+                    (optional — add anything that might help the analysis before running it)
+                  </span>
                 </label>
                 <textarea
                   id="ctx-before"
                   className={styles.contextTextarea}
                   placeholder="e.g. The user is referring specifically to the management section. The current guideline changed in 2024..."
-                  value={extraContext[selectedItem.feedback.id] ?? ""}
-                  onChange={e => setExtraContext(c => ({ ...c, [selectedItem.feedback.id]: e.target.value }))}
+                  value={extraContext[selectedItem.feedback.id] ?? ''}
+                  onChange={e =>
+                    setExtraContext(c => ({ ...c, [selectedItem.feedback.id]: e.target.value }))
+                  }
                   rows={3}
                 />
               </div>
 
+              {/* Error state */}
               {selectedState?.status === 'error' && (
                 <div className={styles.inlineError}>
                   Analysis failed: {selectedState.message}
                 </div>
               )}
 
-              {selectedState?.status === 'done' && (() => {
-                const analysis = selectedState.data
-                return (
-                  <>
-                    {(() => {
-                      const vc = verdictConfig[analysis.verdict]
-                      return (
-                        <div className={styles.verdictBanner} style={{ background: vc.bg, borderColor: vc.border }}>
-                          <span className={styles.verdictDot} style={{ background: vc.color }} />
-                          <strong style={{ color: vc.color }}>{vc.label}</strong>
-                          <span className={styles.verdictReason}>{analysis.verdictReason}</span>
-                        </div>
-                      )
-                    })()}
+              {/* Results */}
+              {selectedState?.status === 'done' && (
+                <>
+                  {/* Verdict banner */}
+                  {(() => {
+                    const vc = verdictConfig[selectedState.data.verdict]
+                    return (
+                      <div
+                        className={styles.verdictBanner}
+                        style={{ background: vc.bg, borderColor: vc.border }}
+                      >
+                        <span className={styles.verdictDot} style={{ background: vc.color }} />
+                        <strong style={{ color: vc.color }}>{vc.label}</strong>
+                        <span className={styles.verdictReason}>{selectedState.data.verdictReason}</span>
+                      </div>
+                    )
+                  })()}
 
+                  {/* Summary */}
+                  <div className={styles.section}>
+                    <span className={styles.sectionTitle}>Summary</span>
+                    <p className={styles.summaryText}>{selectedState.data.summary}</p>
+                  </div>
+
+                  {/* Web search activity */}
+                  {selectedState.data.searchActivity && selectedState.data.searchActivity.length > 0 && (
                     <div className={styles.section}>
-                      <span className={styles.sectionTitle}>Summary</span>
-                      <p className={styles.summaryText}>{analysis.summary}</p>
-                    </div>
-
-                    {/* Search activity */}
-                    {analysis.searchActivity && analysis.searchActivity.length > 0 && (
-                      <div className={styles.section}>
-                        <span className={styles.sectionTitle}>Web search activity</span>
-                        <div className={styles.searchActivity}>
-                          {analysis.searchActivity.map((s, i) => (
-                            <div key={i} className={styles.searchEntry}>
-                              <div className={styles.searchQuery}>
-                                <span className={styles.searchIcon}>🔍</span>
-                                <span>{s.query}</span>
-                              </div>
-                              <div className={styles.searchNice}>
-                                {s.niceCksHit ? (
-                                  <span className={styles.niceHit}>✅ NICE CKS accessed</span>
-                                ) : (
-                                  <span className={styles.niceMiss}>⚠ NICE CKS not found in results</span>
-                                )}
-                              </div>
-                              {s.urls.length > 0 && (
-                                <ul className={styles.searchUrls}>
-                                  {s.urls.slice(0, 5).map((url, j) => (
-                                    <li key={j} className={url.includes('nice.org.uk') ? styles.searchUrlHighlight : ''}>
-                                      <a href={url} target="_blank" rel="noopener noreferrer">{url}</a>
-                                    </li>
-                                  ))}
-                                </ul>
+                      <span className={styles.sectionTitle}>Web search activity</span>
+                      <div className={styles.searchActivity}>
+                        {selectedState.data.searchActivity.map((s, i) => (
+                          <div key={i} className={styles.searchEntry}>
+                            <div className={styles.searchQuery}>
+                              <span className={styles.searchIcon}>🔍</span>
+                              <span>{s.query}</span>
+                            </div>
+                            <div className={styles.searchNice}>
+                              {s.niceCksHit ? (
+                                <span className={styles.niceHit}>✅ NICE CKS accessed</span>
+                              ) : (
+                                <span className={styles.niceMiss}>⚠ NICE CKS not found in results</span>
                               )}
                             </div>
-                          ))}
-                        </div>
+                            {s.urls.length > 0 && (
+                              <ul className={styles.searchUrls}>
+                                {s.urls.slice(0, 5).map((url, j) => (
+                                  <li
+                                    key={j}
+                                    className={url.includes('nice.org.uk') ? styles.searchUrlHighlight : ''}
+                                  >
+                                    <a href={url} target="_blank" rel="noopener noreferrer">{url}</a>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        ))}
                       </div>
-                    )}
+                    </div>
+                  )}
 
-                    {analysis.sources?.length > 0 && (
-                      <div className={styles.section}>
-                        <span className={styles.sectionTitle}>Sources consulted</span>
-                        <ul className={styles.sourceList}>
-                          {analysis.sources.map((s, i) => <li key={i}>{s}</li>)}
-                        </ul>
-                      </div>
-                    )}
-
+                  {/* Sources */}
+                  {selectedState.data.sources?.length > 0 && (
                     <div className={styles.section}>
-                      <span className={styles.sectionTitle}>
-                        {analysis.fieldChanges?.length > 0
-                          ? `Suggested field changes (${analysis.fieldChanges.length})`
-                          : 'Field changes'}
-                      </span>
-                      {analysis.fieldChanges?.length > 0 ? (
-                        <div className={styles.fieldChanges}>
-                          {analysis.fieldChanges.map((fc, i) => {
-                            const cc = confidenceConfig[fc.confidence] ?? confidenceConfig.medium
-                            return (
-                              <div key={i} className={styles.fieldCard}>
-                                <div className={styles.fieldCardHeader}>
-                                  <span className={styles.fieldName}>{fc.fieldName}</span>
-                                  <span className={styles.confidencePill} style={{ color: cc.color, background: cc.bg }}>
-                                    {cc.label}
-                                  </span>
+                      <span className={styles.sectionTitle}>Sources consulted</span>
+                      <ul className={styles.sourceList}>
+                        {selectedState.data.sources.map((s, i) => <li key={i}>{s}</li>)}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Field changes */}
+                  <div className={styles.section}>
+                    <span className={styles.sectionTitle}>
+                      {selectedState.data.fieldChanges?.length > 0
+                        ? `Suggested field changes (${selectedState.data.fieldChanges.length})`
+                        : 'Field changes'}
+                    </span>
+                    {selectedState.data.fieldChanges?.length > 0 ? (
+                      <div className={styles.fieldChanges}>
+                        {selectedState.data.fieldChanges.map((fc, i) => {
+                          const cc = confidenceConfig[fc.confidence] ?? confidenceConfig.medium
+                          return (
+                            <div key={i} className={styles.fieldCard}>
+                              <div className={styles.fieldCardHeader}>
+                                <span className={styles.fieldName}>{fc.fieldName}</span>
+                                <span
+                                  className={styles.confidencePill}
+                                  style={{ color: cc.color, background: cc.bg }}
+                                >
+                                  {cc.label}
+                                </span>
+                              </div>
+                              <p className={styles.fieldIssue}>{fc.issue}</p>
+                              <div className={styles.diffRow}>
+                                <div className={`${styles.diffBox} ${styles.diffBefore}`}>
+                                  <span className={styles.diffLabel}>Current</span>
+                                  <p>{fc.currentText}</p>
                                 </div>
-                                <p className={styles.fieldIssue}>{fc.issue}</p>
-                                <div className={styles.diffRow}>
-                                  <div className={`${styles.diffBox} ${styles.diffBefore}`}>
-                                    <span className={styles.diffLabel}>Current</span>
-                                    <p>{fc.currentText}</p>
-                                  </div>
-                                  <div className={styles.diffArrow}>→</div>
-                                  <div className={`${styles.diffBox} ${styles.diffAfter}`}>
-                                    <span className={styles.diffLabel}>Suggested</span>
-                                    <p>{fc.suggestedText}</p>
-                                  </div>
+                                <div className={styles.diffArrow}>→</div>
+                                <div className={`${styles.diffBox} ${styles.diffAfter}`}>
+                                  <span className={styles.diffLabel}>Suggested</span>
+                                  <p>{fc.suggestedText}</p>
                                 </div>
                               </div>
-                            )
-                          })}
-                        </div>
-                      ) : (
-                        <p className={styles.noChanges}>No specific field changes recommended.</p>
-                      )}
-                    </div>
-
-                    {selectedItem.feedback.contactRegardingOutcome && (
-                      <div className={styles.section}>
-                        <div className={styles.emailHeader}>
-                          <span className={styles.sectionTitle}>Draft email response</span>
-                          <button
-                            className={styles.copyBtn}
-                            onClick={() => copyEmail(selectedItem.feedback.id, analysis.emailResponse)}
-                          >
-                            {copied[selectedItem.feedback.id] ? '✓ Copied' : 'Copy'}
-                          </button>
-                        </div>
-                        {selectedItem.feedback.contactEmail && (
-                          <p className={styles.emailTo}>To: {selectedItem.feedback.contactEmail}</p>
-                        )}
-                        <pre className={styles.emailText}>{analysis.emailResponse}</pre>
+                            </div>
+                          )
+                        })}
                       </div>
+                    ) : (
+                      <p className={styles.noChanges}>No specific field changes recommended.</p>
                     )}
-                  {/* Re-analyse with extra context */}
+                  </div>
+
+                  {/* Draft email */}
+                  {selectedItem.feedback.contactRegardingOutcome && (
+                    <div className={styles.section}>
+                      <div className={styles.emailHeader}>
+                        <span className={styles.sectionTitle}>Draft email response</span>
+                        <button
+                          className={styles.copyBtn}
+                          onClick={() =>
+                            copyEmail(selectedItem.feedback.id, selectedState.data.emailResponse)
+                          }
+                        >
+                          {copied[selectedItem.feedback.id] ? '✓ Copied' : 'Copy'}
+                        </button>
+                      </div>
+                      {selectedItem.feedback.contactEmail && (
+                        <p className={styles.emailTo}>To: {selectedItem.feedback.contactEmail}</p>
+                      )}
+                      <pre className={styles.emailText}>{selectedState.data.emailResponse}</pre>
+                    </div>
+                  )}
+
+                  {/* Re-analyse box — after results */}
                   <div className={styles.reanalyseBox}>
                     <p className={styles.reanalyseTitle}>Refine this analysis</p>
-                    <p className={styles.reanalyseSubtitle}>Add extra context or corrections and re-run the analysis</p>
+                    <p className={styles.reanalyseSubtitle}>
+                      Add extra context or corrections and re-run the analysis
+                    </p>
                     <textarea
                       className={styles.contextTextarea}
                       placeholder="e.g. Please also check the BNF for drug interactions. The user is specifically referring to the 2025 NICE update..."
-                      value={extraContext[selectedItem.feedback.id] ?? ""}
-                      onChange={e => setExtraContext(c => ({ ...c, [selectedItem.feedback.id]: e.target.value }))}
+                      value={extraContext[selectedItem.feedback.id] ?? ''}
+                      onChange={e =>
+                        setExtraContext(c => ({ ...c, [selectedItem.feedback.id]: e.target.value }))
+                      }
                       rows={3}
                     />
                     <button
                       className={styles.reanalyseBtn}
                       onClick={() => analyse(selectedItem)}
-                      disabled={selectedState?.status === 'loading'}
+                      disabled={analyses[selectedItem.feedback.id]?.status === 'loading'}
                     >
-                      {selectedState?.status === 'loading' ? (
+                      {analyses[selectedItem.feedback.id]?.status === 'loading' ? (
                         <><span className={styles.btnSpinner} /> Analysing…</>
                       ) : '↺ Re-analyse with this context'}
                     </button>
                   </div>
-
-                  </>
-                )
-              })()}
+                </>
+              )}
             </>
           )}
         </main>
