@@ -44,7 +44,13 @@ The JSON must have this exact structure:
   "verdict": "valid" | "invalid" | "partial" | "uncertain",
   "verdictReason": "One or two sentence plain-English explanation of your verdict",
   "summary": "A paragraph summarising what the user raised and whether it is correct, partially correct, or incorrect based on evidence",
-  "sources": ["list of sources or guidelines you consulted, e.g. NICE CG90, RCGP curriculum topic, BNF section"],
+  "sources": [
+    {
+      "title": "Short descriptive title, e.g. NICE CKS: Peripheral arterial disease",
+      "url": "The actual URL you accessed, e.g. https://cks.nice.org.uk/topics/peripheral-arterial-disease/",
+      "finding": "One sentence summary of what this source confirmed or contradicted"
+    }
+  ],
   "fieldChanges": [
     {
       "fieldName": "exact field name from the case",
@@ -55,7 +61,9 @@ The JSON must have this exact structure:
     }
   ],
   "emailResponse": "A polite, professional email response to the user. If no contact requested, write 'No contact requested'. Address them generically as 'Thank you for your feedback'. Explain the outcome clearly."
-}`
+}
+
+IMPORTANT: In the "sources" array, only include sources you actually accessed via web search. Each source MUST have a real URL. Do not list sources from memory — only those you verified by searching.`
 
   const userPrompt = `CASE NUMBER: ${caseData.caseNumber}
 
@@ -101,9 +109,8 @@ Please take this additional context into account in your analysis.` : ''}`
     const data = await response.json()
 
     console.log('OpenAI status:', response.status)
-    console.log('OpenAI error:', data.error)
-
     if (data.error) {
+      console.log('OpenAI error:', data.error)
       return NextResponse.json({
         error: `OpenAI API error: ${data.error.code} — ${data.error.message}`
       }, { status: 500 })
@@ -120,70 +127,64 @@ Please take this additional context into account in your analysis.` : ''}`
       }, { status: 500 })
     }
 
-    // Extract web search activity from output blocks
-    const searchActivity: { query: string; urls: string[]; niceCksHit: boolean }[] = []
-    for (const block of data.output ?? []) {
-      if (block.type === 'web_search_call') {
-        // query can be at block.query or block.action.query depending on model
-        const query = block.query ?? block.action?.query ?? block.input ?? JSON.stringify(block).slice(0, 80)
-        searchActivity.push({ query, urls: [], niceCksHit: false })
-      }
-      // URLs come from url_citation annotations on message content blocks
-      if (block.type === 'message') {
-        const urls: string[] = []
-        for (const content of block.content ?? []) {
-          for (const annotation of content.annotations ?? []) {
-            if (annotation.url) urls.push(annotation.url)
-          }
-          // Also check text for nice.org.uk mentions directly
-        }
-        const niceCksHit = urls.some((u: string) =>
-          u.includes('cks.nice.org.uk') ||
-          u.includes('nice.org.uk') ||
-          u.toLowerCase().includes('nice')
-        )
-        if (searchActivity.length > 0) {
-          const last = searchActivity[searchActivity.length - 1]
-          last.urls = [...last.urls, ...urls]
-          if (niceCksHit) last.niceCksHit = true
-        }
-      }
-      // Also handle legacy web_search_result block format
-      if (block.type === 'web_search_result' && searchActivity.length > 0) {
-        const urls: string[] = block.results?.map((r: any) => r.url ?? r.link ?? '') ?? []
-        const niceCksHit = urls.some((u: string) => u.includes('nice.org.uk') || u.toLowerCase().includes('nice'))
-        const last = searchActivity[searchActivity.length - 1]
-        last.urls = [...last.urls, ...urls]
-        if (niceCksHit) last.niceCksHit = true
-      }
-    }
-    // Also scan ALL annotations across the entire output for NICE hits
-    // and assign to the most recent search that doesn't yet have a NICE hit
+    // ── Extract ALL cited URLs from annotations across the entire output ──
+    // These are the URLs the model actually accessed during web search.
+    const citedUrls: string[] = []
     for (const block of data.output ?? []) {
       if (block.type === 'message') {
         for (const content of block.content ?? []) {
           for (const annotation of content.annotations ?? []) {
-            if (annotation.url?.includes('nice.org.uk')) {
-              // Mark all searches as having accessed NICE if it appeared anywhere
-              for (const s of searchActivity) {
-                if (!s.urls.includes(annotation.url)) s.urls.push(annotation.url)
+            if (annotation.type === 'url_citation' && annotation.url) {
+              if (!citedUrls.includes(annotation.url)) {
+                citedUrls.push(annotation.url)
               }
             }
           }
         }
       }
     }
-    // Final pass: update niceCksHit based on accumulated urls
-    for (const s of searchActivity) {
-      s.niceCksHit = s.urls.some((u: string) => u.includes('nice.org.uk'))
+
+    // ── Extract search queries (best-effort from web_search_call blocks) ──
+    const searchQueries: string[] = []
+    for (const block of data.output ?? []) {
+      if (block.type === 'web_search_call') {
+        // Try multiple known locations for the query string
+        const query =
+          (typeof block.query === 'string' && block.query) ||
+          (typeof block.action?.query === 'string' && block.action.query) ||
+          (typeof block.input === 'string' && block.input) ||
+          null
+
+        if (query) {
+          searchQueries.push(query)
+        }
+        // If we couldn't find a readable query, skip it rather than showing raw JSON
+      }
     }
+
+    // ── Determine NICE CKS verification status from actual cited URLs ──
+    const niceCksUrls = citedUrls.filter(u => u.includes('cks.nice.org.uk'))
+    const niceUrls = citedUrls.filter(u => u.includes('nice.org.uk'))
+    const niceCksVerified = niceCksUrls.length > 0
+    const niceVerified = niceUrls.length > 0
 
     // Strip any accidental markdown fences
     const clean = textOutput.replace(/```json|```/g, '').trim()
 
     try {
       const parsed = JSON.parse(clean)
-      return NextResponse.json({ ...parsed, searchActivity })
+      return NextResponse.json({
+        ...parsed,
+        // Append verified URL data so the frontend knows what was actually accessed
+        _verification: {
+          citedUrls,
+          searchQueries,
+          niceCksVerified,
+          niceVerified,
+          niceCksUrls,
+          niceUrls,
+        },
+      })
     } catch {
       return NextResponse.json({
         error: 'Response was not valid JSON',
