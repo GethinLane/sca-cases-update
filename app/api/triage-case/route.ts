@@ -81,7 +81,7 @@ for (const [key, value] of Object.entries(fields)) {
       const fallback: TriageResult = {
         caseNumber: String(caseNumber),
         status: 'review-needed',
-        summary: `AI returned unparseable response. Raw: ${aiResult.textOutput.slice(0, 300)}`,
+        summary: `AI returned unparseable response. Raw: ${aiResult.textOutput.slice(0, 2000)}`,
         searchCount: aiResult.searchCount,
         citedUrls: aiResult.citedUrls,
         provider: aiResult.provider,
