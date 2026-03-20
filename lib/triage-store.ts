@@ -1,12 +1,12 @@
 // lib/triage-store.ts
-// Storage layer for triage audit results using Vercel Blob.
+// Storage layer for triage audit results using Vercel Blob (private access).
 // Stores all results in a single JSON blob for simplicity and efficiency.
 // Falls back to in-memory storage if BLOB_READ_WRITE_TOKEN is not set.
 //
 // Requires: npm install @vercel/blob
 // Env var: BLOB_READ_WRITE_TOKEN (auto-set when you add a Blob store in Vercel dashboard)
 
-import { put, list } from '@vercel/blob'
+import { put, list, get } from '@vercel/blob'
 
 export interface TriageResult {
   caseNumber: string
@@ -49,6 +49,17 @@ let memStore: TriageStore = {
   },
 }
 
+const EMPTY_STORE: TriageStore = {
+  results: {},
+  metadata: {
+    lastScanStarted: null,
+    lastScanCompleted: null,
+    totalCases: 0,
+    casesScanned: 0,
+    scanInProgress: false,
+  },
+}
+
 function useBlob(): boolean {
   return !!process.env.BLOB_READ_WRITE_TOKEN
 }
@@ -59,28 +70,32 @@ async function readStore(): Promise<TriageStore> {
   if (!useBlob()) return memStore
 
   try {
-    const { blobs } = await list({ prefix: 'triage/' })
-    const storeBlob = blobs.find(b => b.pathname === BLOB_PATH)
-
-    if (!storeBlob) {
-      return {
-        results: {},
-        metadata: {
-          lastScanStarted: null,
-          lastScanCompleted: null,
-          totalCases: 0,
-          casesScanned: 0,
-          scanInProgress: false,
-        },
-      }
+    let blobs
+    try {
+      const result = await list({ prefix: 'triage/' })
+      blobs = result.blobs
+    } catch {
+      console.warn('Blob list() failed — returning empty store')
+      return EMPTY_STORE
     }
 
-    const res = await fetch(storeBlob.url)
-    if (!res.ok) throw new Error(`Blob fetch failed: ${res.status}`)
-    return (await res.json()) as TriageStore
+    const storeBlob = blobs.find(b => b.pathname === BLOB_PATH)
+    if (!storeBlob) return EMPTY_STORE
+
+    // Use get() for private stores instead of fetch()
+    const res = await get(storeBlob.url, { access: 'private' })
+    if (!res || res.statusCode !== 200) return EMPTY_STORE
+
+    const text = await res.text()
+    try {
+      return JSON.parse(text) as TriageStore
+    } catch {
+      console.warn('Blob content is not valid JSON — returning empty store')
+      return EMPTY_STORE
+    }
   } catch (err) {
     console.error('Error reading triage store from Blob:', err)
-    return memStore
+    return EMPTY_STORE
   }
 }
 
@@ -92,7 +107,7 @@ async function writeStore(store: TriageStore): Promise<void> {
 
   try {
     await put(BLOB_PATH, JSON.stringify(store), {
-      access: 'public',
+      access: 'private',
       contentType: 'application/json',
       addRandomSuffix: false,
       allowOverwrite: true,
