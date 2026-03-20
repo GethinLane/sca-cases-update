@@ -1,113 +1,165 @@
-// app/api/sync-cases/route.ts
-// Fetches case Assessment + Management fields from Airtable.
-// Stores each case as its own blob file — no race conditions.
-// Airtable rate limit: 5 req/s. We do 2 req every 2s = 1 req/s (safe margin).
+// lib/triage-store.ts
+// Storage layer using Vercel Blob — ONE FILE PER CASE.
+// Each case is stored as triage/case-{number}.json
+// Metadata is stored as triage/meta.json
+// Falls back to in-memory if BLOB_READ_WRITE_TOKEN is not set.
 
-import { NextRequest, NextResponse } from 'next/server'
-import { getCaseData } from '@/lib/airtable'
-import { saveTriageResult, getTriageResult, saveTriageMetadata, getTriageMetadata } from '@/lib/triage-store'
+import { put, list, get, del } from '@vercel/blob'
 
-export const maxDuration = 300
+export interface TriageResult {
+  caseNumber: string
+  status: 'up-to-date' | 'review-needed' | 'outdated' | 'error' | 'pending'
+  summary: string
+  searchCount: number
+  citedUrls: string[]
+  provider: string
+  model: string
+  timestamp: string
+  assessmentSnippet?: string
+  managementSnippet?: string
+}
 
-export async function POST(req: NextRequest) {
+export interface TriageMetadata {
+  lastScanStarted: string | null
+  lastScanCompleted: string | null
+  totalCases: number
+  casesScanned: number
+  scanInProgress: boolean
+}
+
+// ─── In-memory fallback ───────────────────────────────────────────
+
+const memResults: Record<string, TriageResult> = {}
+let memMeta: TriageMetadata = {
+  lastScanStarted: null,
+  lastScanCompleted: null,
+  totalCases: 0,
+  casesScanned: 0,
+  scanInProgress: false,
+}
+
+function useBlob(): boolean {
+  return !!process.env.BLOB_READ_WRITE_TOKEN
+}
+
+// ─── Blob helpers ─────────────────────────────────────────────────
+
+function casePath(caseNumber: string): string {
+  return `triage/case-${caseNumber}.json`
+}
+
+const META_PATH = 'triage/meta.json'
+
+async function readBlob(path: string): Promise<any | null> {
   try {
-    const totalCases = parseInt(process.env.TOTAL_CASE_COUNT ?? '355')
+    const { blobs } = await list({ prefix: path, limit: 1 })
+    const blob = blobs.find(b => b.pathname === path)
+    if (!blob) return null
 
-    const url = new URL(req.url)
-    const startCase = parseInt(url.searchParams.get('start') ?? '1')
-    const limit = parseInt(url.searchParams.get('limit') ?? String(totalCases))
-    const endCase = Math.min(startCase + limit - 1, totalCases)
+    const res = await get(blob.url, { access: 'private' })
+    if (!res || res.statusCode !== 200) return null
 
-    let synced = 0
-    let skipped = 0
-    const errors: string[] = []
-    const batchSize = 2
-    const delayMs = 2000
+    const text = await new Response(res.stream).text()
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
 
-    for (let i = startCase; i <= endCase; i += batchSize) {
-      const batch: number[] = []
-      for (let j = i; j < i + batchSize && j <= endCase; j++) {
-        batch.push(j)
-      }
+async function writeBlob(path: string, data: any): Promise<void> {
+  try {
+    await put(path, JSON.stringify(data), {
+      access: 'private',
+      contentType: 'application/json',
+      addRandomSuffix: false,
+      allowOverwrite: true,
+    })
+  } catch (err) {
+    console.error(`Error writing blob ${path}:`, err)
+  }
+}
 
-      const batchResults = await Promise.allSettled(
-        batch.map(async (caseNum) => {
-          const data = await getCaseData(String(caseNum))
-          return { caseNum, data }
-        })
-      )
+// ─── Public API ───────────────────────────────────────────────────
 
-      for (const result of batchResults) {
-        if (result.status === 'rejected') {
-          errors.push(`Case ${batch}: ${result.reason?.message ?? 'Unknown error'}`)
-          continue
+export async function saveTriageResult(result: TriageResult): Promise<void> {
+  if (!useBlob()) {
+    memResults[result.caseNumber] = result
+    return
+  }
+  await writeBlob(casePath(result.caseNumber), result)
+}
+
+export async function getTriageResult(caseNumber: string): Promise<TriageResult | null> {
+  if (!useBlob()) return memResults[caseNumber] ?? null
+  return await readBlob(casePath(caseNumber))
+}
+
+export async function getAllTriageResults(): Promise<TriageResult[]> {
+  if (!useBlob()) {
+    return Object.values(memResults).sort((a, b) =>
+      (parseInt(a.caseNumber) || 0) - (parseInt(b.caseNumber) || 0)
+    )
+  }
+
+  const results: TriageResult[] = []
+
+  // List all case blobs — Vercel Blob list returns up to 1000 per call
+  let cursor: string | undefined
+  do {
+    const page = await list({
+      prefix: 'triage/case-',
+      limit: 1000,
+      cursor,
+    })
+
+    // Fetch each blob's content
+    for (const blob of page.blobs) {
+      try {
+        const res = await get(blob.url, { access: 'private' })
+        if (res && res.statusCode === 200) {
+          const text = await new Response(res.stream).text()
+          const parsed = JSON.parse(text) as TriageResult
+          results.push(parsed)
         }
-
-        const { caseNum, data } = result.value
-        if (!data || !data.fields) {
-          errors.push(`Case ${caseNum}: no data returned from Airtable`)
-          skipped++
-          continue
-        }
-
-        // Extract ONLY Assessment and Management fields (exact match)
-        let assessmentText = ''
-        let managementText = ''
-
-        for (const [key, value] of Object.entries(data.fields)) {
-          if (key === 'Assessment') {
-            assessmentText += (assessmentText ? '\n\n' : '') + value
-          }
-          if (key === 'Management') {
-            managementText += (managementText ? '\n\n' : '') + value
-          }
-        }
-
-        // Check if we already have a triage result for this case
-        const existing = await getTriageResult(String(caseNum))
-
-        if (existing && existing.status !== 'pending') {
-          // Preserve existing triage status, just update the case text
-          existing.assessmentSnippet = assessmentText
-          existing.managementSnippet = managementText
-          await saveTriageResult(existing)
-        } else {
-          // New entry
-          await saveTriageResult({
-            caseNumber: String(caseNum),
-            status: 'pending',
-            summary: 'Not yet scanned',
-            searchCount: 0,
-            citedUrls: [],
-            provider: '',
-            model: '',
-            timestamp: new Date().toISOString(),
-            assessmentSnippet: assessmentText,
-            managementSnippet: managementText,
-          })
-        }
-        synced++
-      }
-
-      // Rate limit pause between batches
-      if (i + batchSize <= endCase) {
-        await new Promise(r => setTimeout(r, delayMs))
-      }
+      } catch { /* skip corrupt entries */ }
     }
 
-    // Update metadata
-    const meta = await getTriageMetadata()
-    meta.totalCases = totalCases
-    await saveTriageMetadata(meta)
+    cursor = page.hasMore ? page.cursor : undefined
+  } while (cursor)
 
-    return NextResponse.json({
-      synced,
-      skipped,
-      total: endCase - startCase + 1,
-      range: { start: startCase, end: endCase },
-      errors: errors.length > 0 ? errors : undefined,
-    })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  return results.sort((a, b) =>
+    (parseInt(a.caseNumber) || 0) - (parseInt(b.caseNumber) || 0)
+  )
+}
+
+export async function getTriageMetadata(): Promise<TriageMetadata> {
+  if (!useBlob()) return memMeta
+  const data = await readBlob(META_PATH)
+  return data ?? {
+    lastScanStarted: null,
+    lastScanCompleted: null,
+    totalCases: 0,
+    casesScanned: 0,
+    scanInProgress: false,
   }
+}
+
+export async function saveTriageMetadata(meta: TriageMetadata): Promise<void> {
+  if (!useBlob()) {
+    memMeta = meta
+    return
+  }
+  await writeBlob(META_PATH, meta)
+}
+
+export async function clearTriageResult(caseNumber: string): Promise<void> {
+  if (!useBlob()) {
+    delete memResults[caseNumber]
+    return
+  }
+  try {
+    const { blobs } = await list({ prefix: casePath(caseNumber), limit: 1 })
+    const blob = blobs.find(b => b.pathname === casePath(caseNumber))
+    if (blob) await del(blob.url)
+  } catch { /* ignore */ }
 }
