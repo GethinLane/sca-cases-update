@@ -1,162 +1,113 @@
-// lib/triage-store.ts
-// Storage layer for triage audit results using Vercel Blob (private access).
-// Stores all results in a single JSON blob for simplicity and efficiency.
-// Falls back to in-memory storage if BLOB_READ_WRITE_TOKEN is not set.
-//
-// Requires: npm install @vercel/blob
-// Env var: BLOB_READ_WRITE_TOKEN (auto-set when you add a Blob store in Vercel dashboard)
+// app/api/sync-cases/route.ts
+// Fetches case Assessment + Management fields from Airtable.
+// Stores each case as its own blob file — no race conditions.
+// Airtable rate limit: 5 req/s. We do 2 req every 2s = 1 req/s (safe margin).
 
-import { put, list, get } from '@vercel/blob'
+import { NextRequest, NextResponse } from 'next/server'
+import { getCaseData } from '@/lib/airtable'
+import { saveTriageResult, getTriageResult, saveTriageMetadata, getTriageMetadata } from '@/lib/triage-store'
 
-export interface TriageResult {
-  caseNumber: string
-  status: 'up-to-date' | 'review-needed' | 'outdated' | 'error' | 'pending'
-  summary: string
-  searchCount: number
-  citedUrls: string[]
-  provider: string
-  model: string
-  timestamp: string // ISO date
-  assessmentSnippet?: string
-  managementSnippet?: string
-}
+export const maxDuration = 300
 
-export interface TriageMetadata {
-  lastScanStarted: string | null
-  lastScanCompleted: string | null
-  totalCases: number
-  casesScanned: number
-  scanInProgress: boolean
-}
-
-interface TriageStore {
-  results: Record<string, TriageResult> // keyed by caseNumber
-  metadata: TriageMetadata
-}
-
-const BLOB_PATH = 'triage/store.json'
-
-// ─── In-memory fallback ───────────────────────────────────────────
-
-let memStore: TriageStore = {
-  results: {},
-  metadata: {
-    lastScanStarted: null,
-    lastScanCompleted: null,
-    totalCases: 0,
-    casesScanned: 0,
-    scanInProgress: false,
-  },
-}
-
-const EMPTY_STORE: TriageStore = {
-  results: {},
-  metadata: {
-    lastScanStarted: null,
-    lastScanCompleted: null,
-    totalCases: 0,
-    casesScanned: 0,
-    scanInProgress: false,
-  },
-}
-
-function useBlob(): boolean {
-  return !!process.env.BLOB_READ_WRITE_TOKEN
-}
-
-// ─── Blob read/write ──────────────────────────────────────────────
-
-async function readStore(): Promise<TriageStore> {
-  if (!useBlob()) return memStore
-
+export async function POST(req: NextRequest) {
   try {
-    let blobs
-    try {
-      const result = await list({ prefix: 'triage/' })
-      blobs = result.blobs
-    } catch {
-      console.warn('Blob list() failed — returning empty store')
-      return EMPTY_STORE
+    const totalCases = parseInt(process.env.TOTAL_CASE_COUNT ?? '355')
+
+    const url = new URL(req.url)
+    const startCase = parseInt(url.searchParams.get('start') ?? '1')
+    const limit = parseInt(url.searchParams.get('limit') ?? String(totalCases))
+    const endCase = Math.min(startCase + limit - 1, totalCases)
+
+    let synced = 0
+    let skipped = 0
+    const errors: string[] = []
+    const batchSize = 2
+    const delayMs = 2000
+
+    for (let i = startCase; i <= endCase; i += batchSize) {
+      const batch: number[] = []
+      for (let j = i; j < i + batchSize && j <= endCase; j++) {
+        batch.push(j)
+      }
+
+      const batchResults = await Promise.allSettled(
+        batch.map(async (caseNum) => {
+          const data = await getCaseData(String(caseNum))
+          return { caseNum, data }
+        })
+      )
+
+      for (const result of batchResults) {
+        if (result.status === 'rejected') {
+          errors.push(`Case ${batch}: ${result.reason?.message ?? 'Unknown error'}`)
+          continue
+        }
+
+        const { caseNum, data } = result.value
+        if (!data || !data.fields) {
+          errors.push(`Case ${caseNum}: no data returned from Airtable`)
+          skipped++
+          continue
+        }
+
+        // Extract ONLY Assessment and Management fields (exact match)
+        let assessmentText = ''
+        let managementText = ''
+
+        for (const [key, value] of Object.entries(data.fields)) {
+          if (key === 'Assessment') {
+            assessmentText += (assessmentText ? '\n\n' : '') + value
+          }
+          if (key === 'Management') {
+            managementText += (managementText ? '\n\n' : '') + value
+          }
+        }
+
+        // Check if we already have a triage result for this case
+        const existing = await getTriageResult(String(caseNum))
+
+        if (existing && existing.status !== 'pending') {
+          // Preserve existing triage status, just update the case text
+          existing.assessmentSnippet = assessmentText
+          existing.managementSnippet = managementText
+          await saveTriageResult(existing)
+        } else {
+          // New entry
+          await saveTriageResult({
+            caseNumber: String(caseNum),
+            status: 'pending',
+            summary: 'Not yet scanned',
+            searchCount: 0,
+            citedUrls: [],
+            provider: '',
+            model: '',
+            timestamp: new Date().toISOString(),
+            assessmentSnippet: assessmentText,
+            managementSnippet: managementText,
+          })
+        }
+        synced++
+      }
+
+      // Rate limit pause between batches
+      if (i + batchSize <= endCase) {
+        await new Promise(r => setTimeout(r, delayMs))
+      }
     }
 
-    const storeBlob = blobs.find(b => b.pathname === BLOB_PATH)
-    if (!storeBlob) return EMPTY_STORE
+    // Update metadata
+    const meta = await getTriageMetadata()
+    meta.totalCases = totalCases
+    await saveTriageMetadata(meta)
 
-    // Use get() for private stores instead of fetch()
-    const res = await get(storeBlob.url, { access: 'private' })
-    if (!res || res.statusCode !== 200) return EMPTY_STORE
-
-    const text = await new Response(res.stream).text()
-    try {
-      return JSON.parse(text) as TriageStore
-    } catch {
-      console.warn('Blob content is not valid JSON — returning empty store')
-      return EMPTY_STORE
-    }
-  } catch (err) {
-    console.error('Error reading triage store from Blob:', err)
-    return EMPTY_STORE
-  }
-}
-
-async function writeStore(store: TriageStore): Promise<void> {
-  if (!useBlob()) {
-    memStore = store
-    return
-  }
-
-  try {
-    await put(BLOB_PATH, JSON.stringify(store), {
-      access: 'private',
-      contentType: 'application/json',
-      addRandomSuffix: false,
-      allowOverwrite: true,
+    return NextResponse.json({
+      synced,
+      skipped,
+      total: endCase - startCase + 1,
+      range: { start: startCase, end: endCase },
+      errors: errors.length > 0 ? errors : undefined,
     })
-  } catch (err) {
-    console.error('Error writing triage store to Blob:', err)
-    memStore = store
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
-
-// ─── Public API ───────────────────────────────────────────────────
-
-export async function saveTriageResult(result: TriageResult): Promise<void> {
-  const store = await readStore()
-  store.results[result.caseNumber] = result
-  await writeStore(store)
-}
-
-export async function getTriageResult(caseNumber: string): Promise<TriageResult | null> {
-  const store = await readStore()
-  return store.results[caseNumber] ?? null
-}
-
-export async function getAllTriageResults(): Promise<TriageResult[]> {
-  const store = await readStore()
-  return Object.values(store.results).sort((a, b) => {
-    const numA = parseInt(a.caseNumber) || 0
-    const numB = parseInt(b.caseNumber) || 0
-    return numA - numB
-  })
-}
-
-export async function getTriageMetadata(): Promise<TriageMetadata> {
-  const store = await readStore()
-  return store.metadata
-}
-
-export async function saveTriageMetadata(meta: TriageMetadata): Promise<void> {
-  const store = await readStore()
-  store.metadata = meta
-  await writeStore(store)
-}
-
-export async function clearTriageResult(caseNumber: string): Promise<void> {
-  const store = await readStore()
-  delete store.results[caseNumber]
-  await writeStore(store)
-}
-
-// ─── Bulk helpers (efficient for batch scans) ─────────────────────
-
-export { writeStore, readStore }
