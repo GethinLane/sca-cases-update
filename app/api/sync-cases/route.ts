@@ -1,104 +1,116 @@
 // app/api/sync-cases/route.ts
-// Fetches all case Assessment + Management fields from Airtable and stores in KV.
-// This is called before a triage scan, or can be triggered independently.
+// Fetches case Assessment + Management fields from Airtable and stores in Blob.
+// Designed to be called in chunks from the frontend to avoid Vercel timeout.
+// 40 cases per chunk × batches of 4 with 1.2s pause = ~12s per chunk (safe on Hobby).
+// Airtable rate limit: 5 requests/second. We do ~3.3 req/s.
 
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getCaseData } from '@/lib/airtable'
-import { saveTriageResult, getTriageResult, saveTriageMetadata, getTriageMetadata } from '@/lib/triage-store'
+import { readStore, writeStore } from '@/lib/triage-store'
+import type { TriageResult } from '@/lib/triage-store'
 
-export const maxDuration = 60 // Vercel Pro: up to 300s
+export const maxDuration = 60 // Works on Hobby plan — frontend chunks the work
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   try {
-    // Determine how many cases to sync — configurable via env
     const totalCases = parseInt(process.env.TOTAL_CASE_COUNT ?? '355')
-    const meta = await getTriageMetadata()
 
-    // Fetch each case and store Assessment + Management fields
+    // Support chunked syncing: ?start=1&limit=50
+    const url = new URL(req.url)
+    const startCase = parseInt(url.searchParams.get('start') ?? '1')
+    const limit = parseInt(url.searchParams.get('limit') ?? String(totalCases))
+    const endCase = Math.min(startCase + limit - 1, totalCases)
+
+    // Read the entire store ONCE at the start
+    const store = await readStore()
+
     let synced = 0
     const errors: string[] = []
-
-    // Process in small batches to respect Airtable rate limits (5 req/s)
     const batchSize = 4
-    const delayMs = 1000
+    const delayMs = 1200 // 1.2s between batches = well under 5 req/s
 
-    for (let i = 1; i <= totalCases; i += batchSize) {
-      const batch = []
-      for (let j = i; j < i + batchSize && j <= totalCases; j++) {
+    for (let i = startCase; i <= endCase; i += batchSize) {
+      const batch: number[] = []
+      for (let j = i; j < i + batchSize && j <= endCase; j++) {
         batch.push(j)
       }
 
-      await Promise.all(
+      const batchResults = await Promise.allSettled(
         batch.map(async (caseNum) => {
-          try {
-            const data = await getCaseData(String(caseNum))
-            if (!data || !data.fields) {
-              // Don't overwrite existing triage if case not found
-              return
-            }
-
-            // Find assessment and management fields (case-insensitive search)
-            const fields = data.fields
-            let assessmentText = ''
-            let managementText = ''
-
-            for (const [key, value] of Object.entries(fields)) {
-              const lower = key.toLowerCase()
-              if (lower.includes('assessment') && !lower.includes('self')) {
-                assessmentText += (assessmentText ? '\n\n' : '') + value
-              }
-              if (lower.includes('management') || lower.includes('plan')) {
-                managementText += (managementText ? '\n\n' : '') + value
-              }
-            }
-
-            // Check if we already have a triage result — only update the snippets
-            const existing = await getTriageResult(String(caseNum))
-            if (existing) {
-              existing.assessmentSnippet = assessmentText.slice(0, 200)
-              existing.managementSnippet = managementText.slice(0, 200)
-              await saveTriageResult(existing)
-            } else {
-              // Create a "pending" entry
-              await saveTriageResult({
-                caseNumber: String(caseNum),
-                status: 'pending',
-                summary: 'Not yet scanned',
-                searchCount: 0,
-                citedUrls: [],
-                provider: '',
-                model: '',
-                timestamp: new Date().toISOString(),
-                assessmentSnippet: assessmentText.slice(0, 200),
-                managementSnippet: managementText.slice(0, 200),
-              })
-            }
-            synced++
-          } catch (err: any) {
-            errors.push(`Case ${caseNum}: ${err.message}`)
-          }
+          const data = await getCaseData(String(caseNum))
+          return { caseNum, data }
         })
       )
 
-      // Rate limit pause between batches
-      if (i + batchSize <= totalCases) {
+      // Process results in memory (no Blob writes mid-loop)
+      for (const result of batchResults) {
+        if (result.status === 'rejected') {
+          errors.push(result.reason?.message ?? 'Unknown error')
+          continue
+        }
+
+        const { caseNum, data } = result.value
+        if (!data || !data.fields) continue
+
+        // Extract assessment and management fields
+        let assessmentText = ''
+        let managementText = ''
+
+        for (const [key, value] of Object.entries(data.fields)) {
+          const lower = key.toLowerCase()
+          if (lower.includes('assessment') && !lower.includes('self')) {
+            assessmentText += (assessmentText ? '\n\n' : '') + value
+          }
+          if (lower.includes('management') || lower.includes('plan')) {
+            managementText += (managementText ? '\n\n' : '') + value
+          }
+        }
+
+        const caseKey = String(caseNum)
+        const existing = store.results[caseKey]
+
+        if (existing) {
+          // Update snippets only, preserve triage status
+          existing.assessmentSnippet = assessmentText.slice(0, 200)
+          existing.managementSnippet = managementText.slice(0, 200)
+        } else {
+          // New pending entry
+          store.results[caseKey] = {
+            caseNumber: caseKey,
+            status: 'pending',
+            summary: 'Not yet scanned',
+            searchCount: 0,
+            citedUrls: [],
+            provider: '',
+            model: '',
+            timestamp: new Date().toISOString(),
+            assessmentSnippet: assessmentText.slice(0, 200),
+            managementSnippet: managementText.slice(0, 200),
+          }
+        }
+        synced++
+      }
+
+      // Rate limit pause between batches (skip after last batch)
+      if (i + batchSize <= endCase) {
         await new Promise(r => setTimeout(r, delayMs))
       }
     }
 
-    await saveTriageMetadata({
-      ...meta,
-      totalCases,
-      casesScanned: meta.casesScanned, // don't reset scan count
-      scanInProgress: meta.scanInProgress,
-      lastScanStarted: meta.lastScanStarted,
-      lastScanCompleted: meta.lastScanCompleted,
-    })
+    // Update metadata
+    store.metadata.totalCases = totalCases
+
+    // Write the entire store ONCE at the end
+    await writeStore(store)
 
     return NextResponse.json({
       synced,
       total: totalCases,
+      range: { start: startCase, end: endCase },
       errors: errors.length > 0 ? errors.slice(0, 10) : undefined,
+      nextChunk: endCase < totalCases
+        ? `/api/sync-cases?start=${endCase + 1}&limit=${limit}`
+        : null,
     })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
