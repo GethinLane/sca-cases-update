@@ -71,11 +71,26 @@ for (const [key, value] of Object.entries(fields)) {
 
     const aiResult = await callTriageAI(TRIAGE_SYSTEM_PROMPT, userPrompt, maxSearches)
 
-    // Parse the JSON response
+// Parse the JSON response — extract JSON even if surrounded by text
     let parsed: any
     try {
-      const clean = aiResult.textOutput.replace(/```json|```/g, '').trim()
-      parsed = JSON.parse(clean)
+      let clean = aiResult.textOutput
+        .replace(/```json\s*/g, '')
+        .replace(/```\s*/g, '')
+        .replace(/<cite[^>]*>/g, '')
+        .replace(/<\/cite>/g, '')
+        .trim()
+
+      try {
+        parsed = JSON.parse(clean)
+      } catch {
+        const jsonMatch = clean.match(/\{[\s\S]*"status"\s*:[\s\S]*"summary"\s*:[\s\S]*\}/)
+        if (jsonMatch) {
+          parsed = JSON.parse(jsonMatch[0])
+        } else {
+          throw new Error('No JSON found')
+        }
+      }
     } catch {
       // If parsing fails, save as review-needed with the raw text
       const fallback: TriageResult = {
