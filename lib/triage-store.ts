@@ -86,7 +86,7 @@ async function readStore(): Promise<TriageStore> {
     const res = await get(storeBlob.url, { access: 'private' })
     if (!res || res.statusCode !== 200) return EMPTY_STORE
 
-    const text = await res.text()
+    const text = await new Response(res.stream).text()
     try {
       return JSON.parse(text) as TriageStore
     } catch {
