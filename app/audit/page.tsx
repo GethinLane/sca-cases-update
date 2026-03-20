@@ -81,7 +81,7 @@ export default function AuditDashboard() {
   async function syncCases() {
     setSyncing(true)
     setError(null)
-    const chunkSize = 40
+    const chunkSize = 15
     const totalCases = parseInt(process.env.NEXT_PUBLIC_TOTAL_CASE_COUNT ?? '355')
     let start = 1
 
