@@ -87,7 +87,7 @@ async function callAnthropic(
 
   for (const block of data.content ?? []) {
     if (block.type === 'text') {
-      textOutput += block.text
+      textOutput = block.text
 
       // Extract cited URLs from citations in text blocks
       for (const citation of block.citations ?? []) {
