@@ -81,18 +81,25 @@ export default function AuditDashboard() {
 async function syncCases() {
     setSyncing(true)
     setError(null)
-    setScanProgress({ current: 0, total: 355 })
+    const chunkSize = 150
+    const totalCases = 355
+    let start = 1
 
     try {
-      const res = await fetch('/api/sync-cases?start=1&limit=355', {
-        method: 'POST',
-      })
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
-      setScanProgress({ current: 355, total: 355 })
+      while (start <= totalCases) {
+        setScanProgress({ current: start - 1, total: totalCases })
+        const res = await fetch(`/api/sync-cases?start=${start}&limit=${chunkSize}`, {
+          method: 'POST',
+        })
+        const data = await res.json()
+        if (data.error) throw new Error(data.error)
+        start += chunkSize
+        await new Promise(r => setTimeout(r, 2000))
+      }
+      setScanProgress({ current: totalCases, total: totalCases })
       await fetchStatus()
     } catch (e: any) {
-      setError(`Sync failed: ${e.message}`)
+      setError(`Sync failed at case ${start}: ${e.message}`)
     } finally {
       setSyncing(false)
     }
