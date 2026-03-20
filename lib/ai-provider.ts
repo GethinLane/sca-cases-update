@@ -109,6 +109,14 @@ async function callAnthropic(
   // Get search count from usage
   searchCount = data.usage?.server_tool_use?.web_search_requests ?? 0
 
+    // Strip markdown fences and citation tags from the response
+  textOutput = textOutput
+    .replace(/```json\s*/g, '')
+    .replace(/```\s*/g, '')
+    .replace(/<cite[^>]*>/g, '')
+    .replace(/<\/cite>/g, '')
+    .trim()
+
   return { textOutput, searchCount, citedUrls }
 }
 
