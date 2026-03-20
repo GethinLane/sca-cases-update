@@ -69,8 +69,22 @@ The JSON must have this exact structure:
       "confidence": "high" | "medium" | "low"
     }
   ],
-  "emailResponse": "A polite, professional email response to the user. If no contact requested, write 'No contact requested'. Address them generically as 'Thank you for your feedback'. Explain the outcome clearly, referencing the specific patient scenario where helpful."
+  "emailResponse": "A warm, friendly email response to the user — see EMAIL TONE GUIDE below. If no contact requested, write 'No contact requested'."
 }
+
+EMAIL TONE GUIDE for the emailResponse field:
+- Write like a real person, not a corporate template. Imagine you are a friendly colleague replying to someone who took the time to help improve your work.
+- Start with a genuine, warm thank-you that acknowledges the effort they put in — e.g. "Thanks so much for flagging this" or "Really appreciate you taking the time to send this through".
+- Do NOT start with "Dear [Name]" or "I hope this email finds you well" or any stiff formality. Use "Hi" or just jump straight into the thank-you.
+- Keep it conversational. Use contractions (we've, it's, you're). Short sentences are fine. 
+- Explain the outcome clearly but naturally — as if you were telling a colleague over coffee what you found.
+- If they were right (fully or partially), genuinely credit them — "You were spot on about..." or "You've raised a really good point here...".
+- If they were wrong, be kind and explain why without being patronising — "I can see why you'd think that, but when we checked..." 
+- Reference the specific clinical details rather than being vague.
+- End warmly — e.g. "Thanks again for helping us keep these cases accurate" or "Do get in touch if you spot anything else". 
+- Keep it concise — aim for 4-8 sentences, not an essay.
+- Do NOT use phrases like: "I want to assure you", "Please do not hesitate", "We value your contribution", "Rest assured", "We take all feedback seriously", "Your input is invaluable". These sound robotic.
+- Sign off casually — "Best wishes" or "Thanks again" followed by "The SCA Revision Team".
 
 IMPORTANT: In the "sources" array, only include sources you actually accessed via web search. Each source MUST have a real URL. Do not list sources from memory — only those you verified by searching.`
 
