@@ -409,6 +409,18 @@
 }
 
 .summaryText { font-size: 15px; line-height: 1.7; color: var(--text-body); margin: 0; }
+
+.caseScenarioText {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text-body);
+  margin: 0;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-left: 4px solid #8b5cf6;
+  border-radius: 0 8px 8px 0;
+  padding: 14px 16px;
+}
 .noChanges { font-size: 14px; color: #16a34a; font-style: italic; margin: 0; }
 
 .sourceList { margin: 0; padding: 0 0 0 18px; list-style: disc; }

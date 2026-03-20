@@ -43,6 +43,7 @@ interface Verification {
 interface Analysis {
   verdict: 'valid' | 'invalid' | 'partial' | 'uncertain'
   verdictReason: string
+  caseScenario?: string
   summary: string
   sources: SourceEntry[] | string[]
   fieldChanges: FieldChange[]
@@ -320,6 +321,14 @@ export default function Dashboard() {
                       </div>
                     )
                   })()}
+
+                  {/* Case scenario — extracted patient details */}
+                  {selectedState.data.caseScenario && (
+                    <div className={styles.section}>
+                      <span className={styles.sectionTitle}>Clinical scenario (from case)</span>
+                      <p className={styles.caseScenarioText}>{selectedState.data.caseScenario}</p>
+                    </div>
+                  )}
 
                   {/* Summary */}
                   <div className={styles.section}>
