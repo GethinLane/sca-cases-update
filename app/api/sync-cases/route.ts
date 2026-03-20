@@ -56,23 +56,22 @@ export async function POST(req: NextRequest) {
         let assessmentText = ''
         let managementText = ''
 
-        for (const [key, value] of Object.entries(data.fields)) {
-          const lower = key.toLowerCase()
-          if (lower.includes('assessment') && !lower.includes('self')) {
-            assessmentText += (assessmentText ? '\n\n' : '') + value
-          }
-          if (lower.includes('management') || lower.includes('plan')) {
-            managementText += (managementText ? '\n\n' : '') + value
-          }
-        }
+for (const [key, value] of Object.entries(data.fields)) {
+    if (key === 'Assessment') {
+        assessmentText += (assessmentText ? '\n\n' : '') + value
+    }
+    if (key === 'Management') {
+        managementText += (managementText ? '\n\n' : '') + value
+    }
+}
 
         const caseKey = String(caseNum)
         const existing = store.results[caseKey]
 
         if (existing) {
           // Update snippets only, preserve triage status
-          existing.assessmentSnippet = assessmentText.slice(0, 200)
-          existing.managementSnippet = managementText.slice(0, 200)
+          existing.assessmentSnippet = assessmentText
+          existing.managementSnippet = managementText
         } else {
           // New pending entry
           store.results[caseKey] = {
@@ -84,8 +83,8 @@ export async function POST(req: NextRequest) {
             provider: '',
             model: '',
             timestamp: new Date().toISOString(),
-            assessmentSnippet: assessmentText.slice(0, 200),
-            managementSnippet: managementText.slice(0, 200),
+            assessmentSnippet: assessmentText,
+            managementSnippet: managementText,
           }
         }
         synced++
