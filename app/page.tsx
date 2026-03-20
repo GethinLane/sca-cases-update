@@ -151,7 +151,17 @@ export default function Dashboard() {
               <div className={styles.logoSub}>Case Correction Review Tool</div>
             </div>
           </div>
-          <span className={styles.headerBadge}>scarevision.co.uk</span>
+          <nav style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+  <a href="/" style={{
+    fontSize: '13px', color: 'white', fontWeight: 600,
+    textDecoration: 'none', padding: '6px 14px', borderRadius: '6px',
+    background: 'rgba(255,255,255,0.2)',
+  }}>Feedback Review</a>
+  <a href="/audit" style={{
+    fontSize: '13px', color: 'rgba(255,255,255,0.7)', fontWeight: 600,
+    textDecoration: 'none', padding: '6px 14px', borderRadius: '6px',
+  }}>Guideline Audit</a>
+</nav>
         </div>
       </header>
 
