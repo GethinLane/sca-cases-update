@@ -76,16 +76,29 @@ export default function AuditDashboard() {
 
   useEffect(() => { fetchStatus() }, [fetchStatus])
 
-  // Sync cases from Airtable
+  // Sync cases from Airtable — auto-chunks to avoid Vercel timeout
+  // Each chunk syncs ~40 cases in ~12s (well within 60s Hobby limit)
   async function syncCases() {
     setSyncing(true)
+    setError(null)
+    const chunkSize = 40
+    const totalCases = parseInt(process.env.NEXT_PUBLIC_TOTAL_CASE_COUNT ?? '355')
+    let start = 1
+
     try {
-      const res = await fetch('/api/sync-cases', { method: 'POST' })
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
+      while (start <= totalCases) {
+        setScanProgress({ current: start - 1, total: totalCases })
+        const res = await fetch(`/api/sync-cases?start=${start}&limit=${chunkSize}`, {
+          method: 'POST',
+        })
+        const data = await res.json()
+        if (data.error) throw new Error(data.error)
+        start += chunkSize
+      }
+      setScanProgress({ current: totalCases, total: totalCases })
       await fetchStatus()
     } catch (e: any) {
-      setError(e.message)
+      setError(`Sync failed at case ${start}: ${e.message}`)
     } finally {
       setSyncing(false)
     }
@@ -239,17 +252,19 @@ export default function AuditDashboard() {
         </div>
       </div>
 
-      {/* Scan progress */}
-      {scanning && (
+      {/* Progress bar — shown for both sync and scan */}
+      {(scanning || syncing) && scanProgress.total > 0 && (
         <div style={{ padding: '0 28px' }}>
           <div className={styles.progressWrap}>
             <div
               className={styles.progressBar}
-              style={{ width: `${scanProgress.total > 0 ? (scanProgress.current / scanProgress.total) * 100 : 0}%` }}
+              style={{ width: `${(scanProgress.current / scanProgress.total) * 100}%` }}
             />
           </div>
           <div className={styles.progressText}>
-            Scanning case {scanProgress.current} of {scanProgress.total}…
+            {syncing
+              ? `Syncing from Airtable… case ${scanProgress.current} of ${scanProgress.total}`
+              : `Scanning case ${scanProgress.current} of ${scanProgress.total}…`}
           </div>
         </div>
       )}
