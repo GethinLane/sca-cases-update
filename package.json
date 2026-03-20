@@ -10,7 +10,8 @@
   "dependencies": {
     "next": "latest",
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "@vercel/blob": "latest"
   },
   "devDependencies": {
     "@types/node": "^20",
