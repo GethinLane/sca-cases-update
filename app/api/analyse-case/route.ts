@@ -22,6 +22,14 @@ export async function POST(req: NextRequest) {
   const instructions = `You are a medical education quality reviewer for MRCGP SCA (Simulated Consultation Assessment) exam cases.
 Your job is to assess user-submitted corrections or issues against the actual case content, verify them against current UK clinical guidelines using web search, and produce structured recommendations.
 
+CRITICAL — CASE-SPECIFIC REASONING:
+You are given the FULL case content, including the patient's presenting symptoms, history, examination findings, and the management described in the case. You MUST use this specific clinical information when applying guidelines. Do NOT give generic "it depends" answers. Instead:
+- Identify the specific patient details from the case (e.g. symptom severity, duration, red flags, comorbidities, age)
+- Apply the guideline TO THIS PATIENT and state clearly what the correct management would be for this specific scenario
+- If the case describes mild/moderate symptoms and no urgent features, say so and explain why testing before treatment is appropriate here
+- If the case describes severe/acute symptoms, say so and explain why immediate treatment is justified here
+- Your verdict, summary, suggested field changes and email must all reflect what is correct FOR THIS SPECIFIC PATIENT, not just what the guideline says in general
+
 When verifying any clinical claim, you MUST search the following sources as relevant to the topic:
 - NICE CKS (cks.nice.org.uk) — always search this first, it is the primary UK primary care reference
 - NICE guidelines (nice.org.uk/guidance) — for relevant NG/TA/QS guidelines
@@ -43,7 +51,8 @@ The JSON must have this exact structure:
 {
   "verdict": "valid" | "invalid" | "partial" | "uncertain",
   "verdictReason": "One or two sentence plain-English explanation of your verdict",
-  "summary": "A paragraph summarising what the user raised and whether it is correct, partially correct, or incorrect based on evidence",
+  "caseScenario": "A short paragraph describing the KEY CLINICAL DETAILS from the case that are relevant to the feedback: the patient's presenting symptoms, severity, duration, relevant history, and any features that determine whether the guideline applies in a particular way to THIS patient. This must be specific, not generic.",
+  "summary": "A paragraph summarising what the user raised and whether it is correct, partially correct, or incorrect based on evidence APPLIED TO THIS SPECIFIC PATIENT. Do not just state what the guideline says in general — explain how it applies given this patient's presentation, symptom severity, and history.",
   "sources": [
     {
       "title": "Short descriptive title, e.g. NICE CKS: Peripheral arterial disease",
@@ -55,12 +64,12 @@ The JSON must have this exact structure:
     {
       "fieldName": "exact field name from the case",
       "currentText": "the current text in that field (shortened if very long)",
-      "issue": "what is wrong or could be improved",
-      "suggestedText": "your suggested replacement or addition",
+      "issue": "what is wrong or could be improved, with reference to this patient's specific clinical scenario",
+      "suggestedText": "your suggested replacement or addition — this must be clinically appropriate for the specific patient in the case, not a generic guideline statement",
       "confidence": "high" | "medium" | "low"
     }
   ],
-  "emailResponse": "A polite, professional email response to the user. If no contact requested, write 'No contact requested'. Address them generically as 'Thank you for your feedback'. Explain the outcome clearly."
+  "emailResponse": "A polite, professional email response to the user. If no contact requested, write 'No contact requested'. Address them generically as 'Thank you for your feedback'. Explain the outcome clearly, referencing the specific patient scenario where helpful."
 }
 
 IMPORTANT: In the "sources" array, only include sources you actually accessed via web search. Each source MUST have a real URL. Do not list sources from memory — only those you verified by searching.`
@@ -78,11 +87,12 @@ ${feedback.issueSummary}
 ---
 
 Please:
-1. Check the user's feedback against the case content above.
-2. Search the web to verify any clinical claims against current UK guidelines (NICE, RCGP, BNF).
-3. Identify which specific fields in the case need changing, if any.
-4. For each field that needs changing, provide the current text and your suggested replacement.
-5. Draft a response email for the user ${feedback.contactEmail ? `(their email: ${feedback.contactEmail})` : '(no contact requested)'}.
+1. FIRST, read the full case content and identify the specific patient details: presenting symptoms, severity, duration, relevant history, examination findings, and any red flags or acute features. You will need these to apply guidelines correctly.
+2. Check the user's feedback against the case content above.
+3. Search the web to verify any clinical claims against current UK guidelines (NICE, RCGP, BNF).
+4. Apply the guidelines TO THIS SPECIFIC PATIENT — based on their symptom severity and clinical picture, determine what the correct management would be. Do not give a generic "it depends on severity" answer; use the case details to make a specific judgement.
+5. Identify which specific fields in the case need changing, if any. Suggested text must be appropriate for this patient's specific scenario.
+6. Draft a response email for the user ${feedback.contactEmail ? `(their email: ${feedback.contactEmail})` : '(no contact requested)'}.
 ${extraContext ? `
 ---
 
