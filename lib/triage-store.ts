@@ -1,7 +1,12 @@
 // lib/triage-store.ts
-// Storage layer for triage audit results.
-// Uses Upstash Redis via REST API if UPSTASH_REDIS_REST_URL is set,
-// otherwise falls back to in-memory (good for local dev, resets on deploy).
+// Storage layer for triage audit results using Vercel Blob.
+// Stores all results in a single JSON blob for simplicity and efficiency.
+// Falls back to in-memory storage if BLOB_READ_WRITE_TOKEN is not set.
+//
+// Requires: npm install @vercel/blob
+// Env var: BLOB_READ_WRITE_TOKEN (auto-set when you add a Blob store in Vercel dashboard)
+
+import { put, list } from '@vercel/blob'
 
 export interface TriageResult {
   caseNumber: string
@@ -12,8 +17,8 @@ export interface TriageResult {
   provider: string
   model: string
   timestamp: string // ISO date
-  assessmentSnippet?: string // first 200 chars of the assessment field
-  managementSnippet?: string // first 200 chars of the management field
+  assessmentSnippet?: string
+  managementSnippet?: string
 }
 
 export interface TriageMetadata {
@@ -24,94 +29,96 @@ export interface TriageMetadata {
   scanInProgress: boolean
 }
 
-// ─── Upstash Redis REST client (no npm dependency needed) ─────────
-
-async function redisCommand(command: string[]): Promise<any> {
-  const url = process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN
-  if (!url || !token) return null
-
-  const res = await fetch(`${url}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(command),
-  })
-  const data = await res.json()
-  if (data.error) throw new Error(`Redis error: ${data.error}`)
-  return data.result
+interface TriageStore {
+  results: Record<string, TriageResult> // keyed by caseNumber
+  metadata: TriageMetadata
 }
+
+const BLOB_PATH = 'triage/store.json'
 
 // ─── In-memory fallback ───────────────────────────────────────────
 
-const memStore: Record<string, string> = {}
-
-// ─── Store interface ──────────────────────────────────────────────
-
-function useRedis(): boolean {
-  return !!(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN)
+let memStore: TriageStore = {
+  results: {},
+  metadata: {
+    lastScanStarted: null,
+    lastScanCompleted: null,
+    totalCases: 0,
+    casesScanned: 0,
+    scanInProgress: false,
+  },
 }
 
-async function setKey(key: string, value: string): Promise<void> {
-  if (useRedis()) {
-    await redisCommand(['SET', key, value])
-  } else {
-    memStore[key] = value
+function useBlob(): boolean {
+  return !!process.env.BLOB_READ_WRITE_TOKEN
+}
+
+// ─── Blob read/write ──────────────────────────────────────────────
+
+async function readStore(): Promise<TriageStore> {
+  if (!useBlob()) return memStore
+
+  try {
+    const { blobs } = await list({ prefix: 'triage/' })
+    const storeBlob = blobs.find(b => b.pathname === BLOB_PATH)
+
+    if (!storeBlob) {
+      return {
+        results: {},
+        metadata: {
+          lastScanStarted: null,
+          lastScanCompleted: null,
+          totalCases: 0,
+          casesScanned: 0,
+          scanInProgress: false,
+        },
+      }
+    }
+
+    const res = await fetch(storeBlob.url)
+    if (!res.ok) throw new Error(`Blob fetch failed: ${res.status}`)
+    return (await res.json()) as TriageStore
+  } catch (err) {
+    console.error('Error reading triage store from Blob:', err)
+    return memStore
   }
 }
 
-async function getKey(key: string): Promise<string | null> {
-  if (useRedis()) {
-    return await redisCommand(['GET', key])
+async function writeStore(store: TriageStore): Promise<void> {
+  if (!useBlob()) {
+    memStore = store
+    return
   }
-  return memStore[key] ?? null
+
+  try {
+    await put(BLOB_PATH, JSON.stringify(store), {
+      access: 'public',
+      contentType: 'application/json',
+      addRandomSuffix: false,
+      allowOverwrite: true,
+    })
+  } catch (err) {
+    console.error('Error writing triage store to Blob:', err)
+    memStore = store
+  }
 }
 
-async function getAllKeysWithPrefix(prefix: string): Promise<string[]> {
-  if (useRedis()) {
-    // SCAN-based approach for production; for small datasets KEYS is fine
-    const keys = await redisCommand(['KEYS', `${prefix}*`])
-    return keys ?? []
-  }
-  return Object.keys(memStore).filter(k => k.startsWith(prefix))
-}
-
-// ─── Triage-specific operations ───────────────────────────────────
-
-const TRIAGE_PREFIX = 'triage:'
-const META_KEY = 'triage:_meta'
+// ─── Public API ───────────────────────────────────────────────────
 
 export async function saveTriageResult(result: TriageResult): Promise<void> {
-  await setKey(`${TRIAGE_PREFIX}${result.caseNumber}`, JSON.stringify(result))
+  const store = await readStore()
+  store.results[result.caseNumber] = result
+  await writeStore(store)
 }
 
 export async function getTriageResult(caseNumber: string): Promise<TriageResult | null> {
-  const raw = await getKey(`${TRIAGE_PREFIX}${caseNumber}`)
-  if (!raw) return null
-  try {
-    return JSON.parse(raw)
-  } catch {
-    return null
-  }
+  const store = await readStore()
+  return store.results[caseNumber] ?? null
 }
 
 export async function getAllTriageResults(): Promise<TriageResult[]> {
-  const keys = await getAllKeysWithPrefix(TRIAGE_PREFIX)
-  const results: TriageResult[] = []
-
-  for (const key of keys) {
-    if (key === META_KEY) continue
-    const raw = await getKey(key)
-    if (raw) {
-      try {
-        results.push(JSON.parse(raw))
-      } catch { /* skip corrupt entries */ }
-    }
-  }
-
-  return results.sort((a, b) => {
+  const store = await readStore()
+  return Object.values(store.results).sort((a, b) => {
     const numA = parseInt(a.caseNumber) || 0
     const numB = parseInt(b.caseNumber) || 0
     return numA - numB
@@ -119,29 +126,22 @@ export async function getAllTriageResults(): Promise<TriageResult[]> {
 }
 
 export async function getTriageMetadata(): Promise<TriageMetadata> {
-  const raw = await getKey(META_KEY)
-  if (raw) {
-    try {
-      return JSON.parse(raw)
-    } catch { /* fall through */ }
-  }
-  return {
-    lastScanStarted: null,
-    lastScanCompleted: null,
-    totalCases: 0,
-    casesScanned: 0,
-    scanInProgress: false,
-  }
+  const store = await readStore()
+  return store.metadata
 }
 
 export async function saveTriageMetadata(meta: TriageMetadata): Promise<void> {
-  await setKey(META_KEY, JSON.stringify(meta))
+  const store = await readStore()
+  store.metadata = meta
+  await writeStore(store)
 }
 
 export async function clearTriageResult(caseNumber: string): Promise<void> {
-  if (useRedis()) {
-    await redisCommand(['DEL', `${TRIAGE_PREFIX}${caseNumber}`])
-  } else {
-    delete memStore[`${TRIAGE_PREFIX}${caseNumber}`]
-  }
+  const store = await readStore()
+  delete store.results[caseNumber]
+  await writeStore(store)
 }
+
+// ─── Bulk helpers (efficient for batch scans) ─────────────────────
+
+export { writeStore, readStore }
