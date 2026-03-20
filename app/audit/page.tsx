@@ -78,28 +78,21 @@ export default function AuditDashboard() {
 
   // Sync cases from Airtable — auto-chunks to avoid Vercel timeout
   // Each chunk syncs ~40 cases in ~12s (well within 60s Hobby limit)
-  async function syncCases() {
+async function syncCases() {
     setSyncing(true)
     setError(null)
-    const chunkSize = 15
-    const totalCases = parseInt(process.env.NEXT_PUBLIC_TOTAL_CASE_COUNT ?? '355')
-    let start = 1
+    setScanProgress({ current: 0, total: 355 })
 
     try {
-      while (start <= totalCases) {
-        setScanProgress({ current: start - 1, total: totalCases })
-        const res = await fetch(`/api/sync-cases?start=${start}&limit=${chunkSize}`, {
-          method: 'POST',
-        })
-        const data = await res.json()
-        if (data.error) throw new Error(data.error)
-        start += chunkSize
-        await new Promise(r => setTimeout(r, 1500))
-      }
-      setScanProgress({ current: totalCases, total: totalCases })
+      const res = await fetch('/api/sync-cases?start=1&limit=355', {
+        method: 'POST',
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setScanProgress({ current: 355, total: 355 })
       await fetchStatus()
     } catch (e: any) {
-      setError(`Sync failed at case ${start}: ${e.message}`)
+      setError(`Sync failed: ${e.message}`)
     } finally {
       setSyncing(false)
     }
