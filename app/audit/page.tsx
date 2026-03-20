@@ -57,6 +57,8 @@ export default function AuditDashboard() {
   const [scanning, setScanning] = useState(false)
   const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 })
   const [syncing, setSyncing] = useState(false)
+  const [scanFrom, setScanFrom] = useState('1')
+  const [scanTo, setScanTo] = useState('10')
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -76,12 +78,10 @@ export default function AuditDashboard() {
 
   useEffect(() => { fetchStatus() }, [fetchStatus])
 
-  // Sync cases from Airtable — auto-chunks to avoid Vercel timeout
-  // Each chunk syncs ~40 cases in ~12s (well within 60s Hobby limit)
-async function syncCases() {
+  async function syncCases() {
     setSyncing(true)
     setError(null)
-    const chunkSize = 40
+    const chunkSize = 50
     const totalCases = 355
     let start = 1
 
@@ -105,18 +105,33 @@ async function syncCases() {
     }
   }
 
-  // Run triage scan — processes cases sequentially with a delay
   async function runScan() {
-    setScanning(true)
-    const casesToScan = results
-      .filter(r => r.status === 'pending' || r.status === 'error')
-      .map(r => r.caseNumber)
+    const from = parseInt(scanFrom) || 1
+    const to = parseInt(scanTo) || 355
 
-    // If nothing pending, scan ALL cases
-    const targets = casesToScan.length > 0 ? casesToScan : results.map(r => r.caseNumber)
+    if (from > to || from < 1) {
+      setError('Invalid range — "from" must be less than "to"')
+      return
+    }
+
+    setScanning(true)
+    setError(null)
+
+    const targets: string[] = []
+    for (let i = from; i <= to; i++) {
+      targets.push(String(i))
+    }
+
     setScanProgress({ current: 0, total: targets.length })
 
     for (let i = 0; i < targets.length; i++) {
+      setResults(prev =>
+        prev.map(r => r.caseNumber === targets[i]
+          ? { ...r, status: 'pending' as const, summary: 'Scanning…' }
+          : r
+        )
+      )
+
       try {
         const res = await fetch('/api/triage-case', {
           method: 'POST',
@@ -124,7 +139,6 @@ async function syncCases() {
           body: JSON.stringify({ caseNumber: targets[i], batchMode: true }),
         })
         const data = await res.json()
-        // Update the result in-place
         setResults(prev =>
           prev.map(r => r.caseNumber === targets[i] ? { ...r, ...data } : r)
         )
@@ -132,7 +146,6 @@ async function syncCases() {
 
       setScanProgress({ current: i + 1, total: targets.length })
 
-      // Delay between cases to be nice to APIs
       if (i < targets.length - 1) {
         await new Promise(r => setTimeout(r, 2000))
       }
@@ -142,10 +155,9 @@ async function syncCases() {
     await fetchStatus()
   }
 
-  // Triage a single case
   async function triageSingle(caseNumber: string) {
     setResults(prev =>
-      prev.map(r => r.caseNumber === caseNumber ? { ...r, status: 'pending' as const, summary: 'Scanning...' } : r)
+      prev.map(r => r.caseNumber === caseNumber ? { ...r, status: 'pending' as const, summary: 'Scanning…' } : r)
     )
     try {
       const res = await fetch('/api/triage-case', {
@@ -164,12 +176,7 @@ async function syncCases() {
     }
   }
 
-  // Filter results
-  const filtered = filter === 'all'
-    ? results
-    : results.filter(r => r.status === filter)
-
-  // Sort: outdated first, then review-needed, then pending, then error, then up-to-date
+  const filtered = filter === 'all' ? results : results.filter(r => r.status === filter)
   const sortOrder: Record<string, number> = { 'outdated': 0, 'review-needed': 1, 'pending': 2, 'error': 3, 'up-to-date': 4 }
   const sorted = [...filtered].sort((a, b) => (sortOrder[a.status] ?? 5) - (sortOrder[b.status] ?? 5))
 
@@ -181,13 +188,14 @@ async function syncCases() {
     if (mins < 60) return `${mins}m ago`
     const hrs = Math.floor(mins / 60)
     if (hrs < 24) return `${hrs}h ago`
-    const days = Math.floor(hrs / 24)
-    return `${days}d ago`
+    return `${Math.floor(hrs / 24)}d ago`
   }
+
+  const rangeCount = Math.max(0, (parseInt(scanTo) || 0) - (parseInt(scanFrom) || 0) + 1)
 
   return (
     <div className={styles.root}>
-      {/* Header */}
+      {/* ── Header ── */}
       <header className={styles.header}>
         <div className={styles.headerInner}>
           <div className={styles.logo}>
@@ -204,236 +212,237 @@ async function syncCases() {
         </div>
       </header>
 
-      {/* Stats bar */}
-      <div className={styles.statsBar}>
-        {stats && (
-          <>
-            <div className={styles.statCard}>
-              <div className={styles.statLabel}>Total cases</div>
-              <div className={`${styles.statValue} ${styles.statMuted}`}>{stats.total}</div>
+      <div className={styles.appShell}>
+        {/* ── Sidebar ── */}
+        <aside className={styles.sidebar}>
+          {/* Stats header */}
+          <div className={styles.sidebarHeader}>
+            <div className={styles.sidebarTitle}>Case audit</div>
+            {stats && (
+              <div className={styles.sidebarStats}>
+                <span className={styles.statGreen}>{stats.upToDate} ok</span>
+                <span className={styles.statAmber}>{stats.reviewNeeded} review</span>
+                <span className={styles.statRed}>{stats.outdated} outdated</span>
+                <span className={styles.statMuted}>{stats.pending} pending</span>
+              </div>
+            )}
+          </div>
+
+          {/* Controls */}
+          <div className={styles.sidebarControls}>
+            <button
+              className={`${styles.scanBtn} ${styles.scanBtnSecondary}`}
+              onClick={syncCases}
+              disabled={syncing || scanning}
+            >
+              {syncing ? <><span className={styles.btnSpinner} /> Syncing…</> : '⬇ Sync Airtable'}
+            </button>
+
+            <div className={styles.scanRange}>
+              <input
+                type="number"
+                className={styles.scanRangeInput}
+                value={scanFrom}
+                onChange={e => setScanFrom(e.target.value)}
+                min={1} max={355}
+                disabled={scanning}
+              />
+              <span className={styles.scanRangeTo}>to</span>
+              <input
+                type="number"
+                className={styles.scanRangeInput}
+                value={scanTo}
+                onChange={e => setScanTo(e.target.value)}
+                min={1} max={355}
+                disabled={scanning}
+              />
+              <button
+                className={styles.scanBtn}
+                onClick={runScan}
+                disabled={scanning || syncing || results.length === 0}
+              >
+                {scanning
+                  ? <><span className={styles.btnSpinner} /> {scanProgress.current}/{scanProgress.total}</>
+                  : `⚡ Scan (${rangeCount})`}
+              </button>
             </div>
-            <div className={styles.statCard}>
-              <div className={styles.statLabel}>Up to date</div>
-              <div className={`${styles.statValue} ${styles.statGreen}`}>{stats.upToDate}</div>
+          </div>
+
+          {/* Progress bar */}
+          {(scanning || syncing) && scanProgress.total > 0 && (
+            <div className={styles.sidebarProgress}>
+              <div className={styles.progressWrap}>
+                <div
+                  className={styles.progressBar}
+                  style={{ width: `${(scanProgress.current / scanProgress.total) * 100}%` }}
+                />
+              </div>
+              <div className={styles.progressText}>
+                {syncing ? `Syncing ${scanProgress.current}/${scanProgress.total}` : `Scanning ${scanProgress.current}/${scanProgress.total}`}
+              </div>
             </div>
-            <div className={styles.statCard}>
-              <div className={styles.statLabel}>Review needed</div>
-              <div className={`${styles.statValue} ${styles.statAmber}`}>{stats.reviewNeeded}</div>
-            </div>
-            <div className={styles.statCard}>
-              <div className={styles.statLabel}>Outdated</div>
-              <div className={`${styles.statValue} ${styles.statRed}`}>{stats.outdated}</div>
-            </div>
-            <div className={styles.statCard}>
-              <div className={styles.statLabel}>Pending</div>
-              <div className={`${styles.statValue} ${styles.statMuted}`}>{stats.pending}</div>
-            </div>
-          </>
-        )}
-        <div className={styles.scanControls}>
-          {provider && (
-            <span className={styles.providerBadge}>
-              Provider: {provider}
-            </span>
           )}
-          <button
-            className={`${styles.scanBtn} ${styles.scanBtnSecondary}`}
-            onClick={syncCases}
-            disabled={syncing || scanning}
-          >
-            {syncing ? <><span className={styles.btnSpinner} /> Syncing…</> : '⬇ Sync from Airtable'}
-          </button>
-          <button
-            className={styles.scanBtn}
-            onClick={runScan}
-            disabled={scanning || syncing || results.length === 0}
-          >
-            {scanning ? <><span className={styles.btnSpinner} /> Scanning…</> : '⚡ Run triage scan'}
-          </button>
-        </div>
-      </div>
 
-      {/* Progress bar — shown for both sync and scan */}
-      {(scanning || syncing) && scanProgress.total > 0 && (
-        <div style={{ padding: '0 28px' }}>
-          <div className={styles.progressWrap}>
-            <div
-              className={styles.progressBar}
-              style={{ width: `${(scanProgress.current / scanProgress.total) * 100}%` }}
-            />
+          {/* Filter bar */}
+          <div className={styles.filterBar}>
+            {(['all', 'outdated', 'review-needed', 'up-to-date', 'pending', 'error'] as FilterStatus[]).map(f => {
+              const count = f === 'all' ? results.length : results.filter(r => r.status === f).length
+              if (count === 0 && f !== 'all') return null
+              const labels: Record<string, string> = {
+                'all': 'All', 'outdated': 'Outdated', 'review-needed': 'Review',
+                'up-to-date': 'OK', 'pending': 'Pending', 'error': 'Errors',
+              }
+              return (
+                <button
+                  key={f}
+                  className={`${styles.filterBtn} ${filter === f ? styles.filterBtnActive : ''}`}
+                  onClick={() => setFilter(f)}
+                >
+                  {labels[f]} <span className={styles.filterCount}>{count}</span>
+                </button>
+              )
+            })}
           </div>
-          <div className={styles.progressText}>
-            {syncing
-              ? `Syncing from Airtable… case ${scanProgress.current} of ${scanProgress.total}`
-              : `Scanning case ${scanProgress.current} of ${scanProgress.total}…`}
-          </div>
-        </div>
-      )}
 
-      {/* Content */}
-      <div className={styles.content}>
-        {loading && (
-          <div className={styles.stateBox}>
-            <div className={styles.spinner} />
-            <p>Loading audit data…</p>
-          </div>
-        )}
-
-        {error && !loading && (
-          <div className={styles.stateBox}>
-            <p style={{ color: '#dc2626' }}>Error: {error}</p>
-            <p style={{ fontSize: 13 }}>
-              Check your environment variables. If this is a fresh setup, click "Sync from Airtable" first.
-            </p>
-          </div>
-        )}
-
-        {!loading && !error && results.length === 0 && (
-          <div className={styles.stateBox}>
-            <div className={styles.emptyIcon}>📋</div>
-            <div className={styles.emptyText}>No cases loaded yet</div>
-            <p style={{ fontSize: 13, color: '#888', marginTop: 8 }}>
-              Click "Sync from Airtable" to load your cases, then "Run triage scan" to check them against current guidelines.
-            </p>
-          </div>
-        )}
-
-        {!loading && !error && results.length > 0 && (
-          <>
-            {/* Filter bar */}
-            <div className={styles.filterBar}>
-              {(['all', 'outdated', 'review-needed', 'up-to-date', 'pending', 'error'] as FilterStatus[]).map(f => {
-                const count = f === 'all' ? results.length : results.filter(r => r.status === f).length
-                if (count === 0 && f !== 'all') return null
-                const labels: Record<string, string> = {
-                  'all': 'All',
-                  'outdated': 'Outdated',
-                  'review-needed': 'Review needed',
-                  'up-to-date': 'Up to date',
-                  'pending': 'Pending',
-                  'error': 'Errors',
-                }
-                return (
-                  <button
-                    key={f}
-                    className={`${styles.filterBtn} ${filter === f ? styles.filterBtnActive : ''}`}
-                    onClick={() => setFilter(f)}
-                  >
-                    {labels[f]}<span className={styles.filterCount}>({count})</span>
-                  </button>
-                )
-              })}
-            </div>
-
-            {/* Case list */}
-            <div className={styles.caseList}>
-              {sorted.map(r => {
-                const sc = STATUS_CONFIG[r.status] ?? STATUS_CONFIG['pending']
-                return (
-                  <div
-                    key={r.caseNumber}
-                    className={`${styles.caseRow} ${selectedCase === r.caseNumber ? styles.caseRowSelected : ''}`}
-                    onClick={() => setSelectedCase(r.caseNumber === selectedCase ? null : r.caseNumber)}
-                  >
-                    <div className={styles.caseNum}>Case {r.caseNumber}</div>
-                    <span className={`${styles.statusBadge} ${styles[sc.className]}`}>{sc.label}</span>
-                    <div className={styles.caseSummary}>
-                      {r.summary.replace(/\*\*/g, '')}
-                    </div>
-                    <div className={styles.caseTimestamp}>
-                      {r.timestamp && r.status !== 'pending' ? timeAgo(r.timestamp) : '—'}
-                    </div>
+          {/* Case list */}
+          <div className={styles.sidebarList}>
+            {loading && (
+              <div style={{ padding: '24px 20px', textAlign: 'center' }}>
+                <div className={styles.spinner} />
+                <p style={{ fontSize: 13, color: '#888' }}>Loading…</p>
+              </div>
+            )}
+            {!loading && results.length === 0 && (
+              <div style={{ padding: '24px 20px', fontSize: 13, color: '#999', textAlign: 'center' }}>
+                Click "Sync Airtable" to load cases
+              </div>
+            )}
+            {sorted.map(r => {
+              const sc = STATUS_CONFIG[r.status] ?? STATUS_CONFIG['pending']
+              const isActive = r.caseNumber === selectedCase
+              return (
+                <div
+                  key={r.caseNumber}
+                  className={`${styles.sidebarItem} ${isActive ? styles.sidebarItemActive : ''}`}
+                  onClick={() => setSelectedCase(r.caseNumber)}
+                >
+                  <div className={styles.sidebarItemTop}>
+                    <span className={styles.sidebarCaseNum}>Case {r.caseNumber}</span>
+                    <span className={`${styles.statusBadgeSm} ${styles[sc.className]}`}>{sc.label}</span>
                   </div>
-                )
-              })}
-            </div>
-
-            {/* Detail panel */}
-            {selectedResult && (
-              <div className={styles.detailPanel}>
-                <div className={styles.detailHeader}>
-                  <h2 className={styles.detailTitle}>Case {selectedResult.caseNumber}</h2>
-                  <div className={styles.detailActions}>
-                    <button
-                      className={styles.scanBtn}
-                      onClick={() => triageSingle(selectedResult.caseNumber)}
-                      disabled={scanning}
-                      style={{ fontSize: 12, padding: '8px 14px' }}
-                    >
-                      ↺ Re-triage
-                    </button>
-                    <Link
-                      href={`/?case=${selectedResult.caseNumber}`}
-                      className={styles.scanBtn}
-                      style={{ fontSize: 12, padding: '8px 14px', textDecoration: 'none', background: 'var(--navy)' }}
-                    >
-                      ⚡ Full analysis
-                    </Link>
+                  <div className={styles.sidebarSnippet}>
+                    {r.summary.replace(/\*\*/g, '').slice(0, 80)}
+                    {r.summary.length > 80 ? '…' : ''}
                   </div>
                 </div>
+              )
+            })}
+          </div>
+        </aside>
 
-                <div className={styles.detailSection}>
-                  <p className={styles.detailLabel}>Triage verdict</p>
-                  <p className={styles.detailText}
+        {/* ── Main content ── */}
+        <main className={styles.content}>
+          {error && (
+            <div className={styles.errorBox}>
+              <strong>Error</strong>
+              <p>{error}</p>
+            </div>
+          )}
+
+          {!selectedResult && !error && (
+            <div className={styles.emptyState}>
+              <div className={styles.emptyIcon}>📋</div>
+              <div className={styles.emptyText}>
+                {results.length === 0
+                  ? 'No cases loaded — click "Sync Airtable" to start'
+                  : 'Select a case from the sidebar to view details'}
+              </div>
+            </div>
+          )}
+
+          {selectedResult && (
+            <>
+              {/* Case header */}
+              <div className={styles.caseHeader}>
+                <div className={styles.caseTitleGroup}>
+                  <h1 className={styles.caseTitle}>Case {selectedResult.caseNumber}</h1>
+                  {(() => {
+                    const sc = STATUS_CONFIG[selectedResult.status]
+                    return <span className={`${styles.statusBadge} ${styles[sc.className]}`}>{sc.label}</span>
+                  })()}
+                </div>
+                <div className={styles.caseActions}>
+                  <button
+                    className={styles.analyseBtn}
+                    onClick={() => triageSingle(selectedResult.caseNumber)}
+                    disabled={scanning}
+                  >
+                    {selectedResult.status === 'pending' && selectedResult.summary === 'Scanning…'
+                      ? <><span className={styles.btnSpinner} /> Scanning…</>
+                      : '↺ Re-triage'}
+                  </button>
+                  <Link
+                    href={`/?case=${selectedResult.caseNumber}`}
+                    className={styles.analyseBtnSecondary}
+                  >
+                    ⚡ Full analysis
+                  </Link>
+                </div>
+              </div>
+
+              {/* Verdict */}
+              {selectedResult.status !== 'pending' && (
+                <div className={styles.section}>
+                  <span className={styles.sectionTitle}>Triage verdict</span>
+                  <div className={styles.verdictText}
                     dangerouslySetInnerHTML={{
                       __html: selectedResult.summary
                         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                     }}
                   />
                 </div>
+              )}
 
-                {selectedResult.assessmentSnippet && (
-                  <div className={styles.detailSection}>
-                    <p className={styles.detailLabel}>Assessment (preview)</p>
-                    <pre className={styles.detailSnippet}>{selectedResult.assessmentSnippet}…</pre>
-                  </div>
-                )}
-
-                {selectedResult.managementSnippet && (
-                  <div className={styles.detailSection}>
-                    <p className={styles.detailLabel}>Management (preview)</p>
-                    <pre className={styles.detailSnippet}>{selectedResult.managementSnippet}…</pre>
-                  </div>
-                )}
-
-                {selectedResult.citedUrls.length > 0 && (
-                  <div className={styles.detailSection}>
-                    <p className={styles.detailLabel}>Sources accessed</p>
-                    <ul className={styles.detailSources}>
-                      {selectedResult.citedUrls.map((url, i) => (
-                        <li key={i}>
-                          <a href={url} target="_blank" rel="noopener noreferrer">{url}</a>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                <div className={styles.detailMeta}>
-                  <span className={styles.detailMetaItem}>
-                    Provider: <strong>{selectedResult.provider || '—'}</strong>
-                  </span>
-                  <span className={styles.detailMetaItem}>
-                    Model: <strong>{selectedResult.model || '—'}</strong>
-                  </span>
-                  <span className={styles.detailMetaItem}>
-                    Searches: <strong>{selectedResult.searchCount}</strong>
-                  </span>
-                  <span className={styles.detailMetaItem}>
-                    Scanned: <strong>{selectedResult.timestamp ? new Date(selectedResult.timestamp).toLocaleString() : '—'}</strong>
-                  </span>
+              {/* Assessment */}
+              {selectedResult.assessmentSnippet && (
+                <div className={styles.section}>
+                  <span className={styles.sectionTitle}>Assessment</span>
+                  <pre className={styles.caseText}>{selectedResult.assessmentSnippet}</pre>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Last scan info */}
-            {metadata?.lastScanCompleted && (
-              <div style={{ marginTop: 20, fontSize: 12, color: '#888', textAlign: 'center' }}>
-                Last full scan completed: {new Date(metadata.lastScanCompleted).toLocaleString()}
+              {/* Management */}
+              {selectedResult.managementSnippet && (
+                <div className={styles.section}>
+                  <span className={styles.sectionTitle}>Management</span>
+                  <pre className={styles.caseText}>{selectedResult.managementSnippet}</pre>
+                </div>
+              )}
+
+              {/* Sources */}
+              {selectedResult.citedUrls.length > 0 && (
+                <div className={styles.section}>
+                  <span className={styles.sectionTitle}>Sources accessed</span>
+                  <ul className={styles.sourceList}>
+                    {selectedResult.citedUrls.map((url, i) => (
+                      <li key={i}>
+                        <a href={url} target="_blank" rel="noopener noreferrer">{url}</a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Meta */}
+              <div className={styles.metaBar}>
+                <span>Provider: <strong>{selectedResult.provider || '—'}</strong></span>
+                <span>Model: <strong>{selectedResult.model || '—'}</strong></span>
+                <span>Searches: <strong>{selectedResult.searchCount}</strong></span>
+                <span>Scanned: <strong>{selectedResult.timestamp && selectedResult.status !== 'pending' ? timeAgo(selectedResult.timestamp) : '—'}</strong></span>
               </div>
-            )}
-          </>
-        )}
+            </>
+          )}
+        </main>
       </div>
     </div>
   )
