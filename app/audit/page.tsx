@@ -81,7 +81,7 @@ export default function AuditDashboard() {
 async function syncCases() {
     setSyncing(true)
     setError(null)
-    const chunkSize = 150
+    const chunkSize = 40
     const totalCases = 355
     let start = 1
 
