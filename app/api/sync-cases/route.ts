@@ -9,7 +9,7 @@ import { getCaseData } from '@/lib/airtable'
 import { readStore, writeStore } from '@/lib/triage-store'
 import type { TriageResult } from '@/lib/triage-store'
 
-export const maxDuration = 60 // Works on Hobby plan — frontend chunks the work
+export const maxDuration = 300 // Works on Hobby plan — frontend chunks the work
 
 export async function POST(req: NextRequest) {
   try {
