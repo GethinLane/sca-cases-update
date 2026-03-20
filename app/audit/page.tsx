@@ -94,6 +94,7 @@ export default function AuditDashboard() {
         const data = await res.json()
         if (data.error) throw new Error(data.error)
         start += chunkSize
+        await new Promise(r => setTimeout(r, 1500))
       }
       setScanProgress({ current: totalCases, total: totalCases })
       await fetchStatus()
