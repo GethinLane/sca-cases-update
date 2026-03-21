@@ -1,21 +1,13 @@
 // lib/ai-provider.ts
-// Dual-provider abstraction: supports both OpenAI and Anthropic for the triage system.
-// The existing analyse-case route is LEFT UNTOUCHED — it keeps using OpenAI as before.
-//
-// Set TRIAGE_AI_PROVIDER=anthropic|openai in your Vercel env to choose.
-// Required env vars per provider:
-//   anthropic → ANTHROPIC_API_KEY
-//   openai    → OPENAI_API_KEY
+import { getAllGuidelineDomainStrings } from './guideline-domains'
 
 export type TriageProvider = 'anthropic' | 'openai'
 
 export function getTriageProvider(): TriageProvider {
   const provider = (process.env.TRIAGE_AI_PROVIDER ?? 'anthropic').toLowerCase()
   if (provider === 'openai') return 'openai'
-  return 'anthropic' // default
+  return 'anthropic'
 }
-
-// ─── Anthropic provider ───────────────────────────────────────────────
 
 interface AnthropicTriageResult {
   textOutput: string
@@ -43,26 +35,20 @@ async function callAnthropic(
     body: JSON.stringify({
       model,
       max_tokens: 3024,
-      system: systemPrompt,
+      system: [
+        {
+          type: 'text',
+          text: systemPrompt,
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
       messages: [{ role: 'user', content: userPrompt }],
       tools: [
         {
           type: 'web_search_20250305',
           name: 'web_search',
           max_uses: maxSearches,
-          // Restrict searches to UK clinical guideline sites for relevance + cost control
-          allowed_domains: [
-            'cks.nice.org.uk',
-            'nice.org.uk',
-            'bnf.nice.org.uk',
-            'rcgp.org.uk',
-            'bad.org.uk',
-            'thebms.org.uk',
-            'rcog.org.uk',
-            'brit-thoracic.org.uk',
-            'sign.ac.uk',
-            'british-thyroid-association.org',
-          ],
+          allowed_domains: getAllGuidelineDomainStrings(), // ← restored
           user_location: {
             type: 'approximate',
             country: 'GB',
@@ -80,7 +66,6 @@ async function callAnthropic(
     throw new Error(`Anthropic API error: ${data.error?.message ?? JSON.stringify(data.error)}`)
   }
 
-  // Extract text output from content blocks
   let textOutput = ''
   let searchCount = 0
   const citedUrls: string[] = []
@@ -88,8 +73,6 @@ async function callAnthropic(
   for (const block of data.content ?? []) {
     if (block.type === 'text') {
       textOutput = block.text
-
-      // Extract cited URLs from citations in text blocks
       for (const citation of block.citations ?? []) {
         if (citation.url && !citedUrls.includes(citation.url)) {
           citedUrls.push(citation.url)
@@ -97,7 +80,6 @@ async function callAnthropic(
       }
     }
     if (block.type === 'web_search_tool_result') {
-      // Count search results and extract URLs
       for (const item of block.content ?? []) {
         if (item.type === 'web_search_result' && item.url) {
           if (!citedUrls.includes(item.url)) citedUrls.push(item.url)
@@ -106,10 +88,8 @@ async function callAnthropic(
     }
   }
 
-  // Get search count from usage
   searchCount = data.usage?.server_tool_use?.web_search_requests ?? 0
 
-    // Strip markdown fences and citation tags from the response
   textOutput = textOutput
     .replace(/```json\s*/g, '')
     .replace(/```\s*/g, '')
@@ -119,8 +99,6 @@ async function callAnthropic(
 
   return { textOutput, searchCount, citedUrls }
 }
-
-// ─── OpenAI provider ──────────────────────────────────────────────────
 
 async function callOpenAI(
   systemPrompt: string,
@@ -151,11 +129,9 @@ async function callOpenAI(
     throw new Error(`OpenAI API error: ${data.error?.code} — ${data.error?.message}`)
   }
 
-  // Extract text output
   const textOutput = data.output?.find((o: any) => o.type === 'message')
     ?.content?.find((c: any) => c.type === 'output_text')?.text ?? ''
 
-  // Extract cited URLs
   const citedUrls: string[] = []
   for (const block of data.output ?? []) {
     if (block.type === 'message') {
@@ -169,7 +145,6 @@ async function callOpenAI(
     }
   }
 
-  // Count search queries
   let searchCount = 0
   for (const block of data.output ?? []) {
     if (block.type === 'web_search_call') searchCount++
@@ -177,8 +152,6 @@ async function callOpenAI(
 
   return { textOutput, searchCount, citedUrls }
 }
-
-// ─── Unified interface ────────────────────────────────────────────────
 
 export interface TriageAIResult {
   textOutput: string
