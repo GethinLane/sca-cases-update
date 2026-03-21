@@ -84,7 +84,7 @@ const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
 }
 
 // 6 per minute = 1 every 10 seconds (start-to-start)
-const SCAN_INTERVAL_MS = 10000
+const SCAN_INTERVAL_MS = 60000
 
 export default function AuditDashboard() {
   const [results, setResults] = useState<TriageResult[]>([])
