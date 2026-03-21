@@ -15,6 +15,7 @@ interface TriageResult {
   timestamp: string
   assessmentSnippet?: string
   managementSnippet?: string
+  reviewedAt?: string
 }
 
 interface Stats {
@@ -24,6 +25,7 @@ interface Stats {
   outdated: number
   errors: number
   pending: number
+  reviewed: number
   totalSearches: number
 }
 
@@ -71,7 +73,7 @@ type FullAnalysisState =
   | { status: 'done'; data: FullAnalysisResult }
   | { status: 'error'; message: string }
 
-type FilterStatus = 'all' | 'outdated' | 'review-needed' | 'up-to-date' | 'pending' | 'error'
+type FilterStatus = 'all' | 'outdated' | 'review-needed' | 'up-to-date' | 'reviewed' | 'pending' | 'error'
 
 const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
   'up-to-date': { label: 'Up to date', className: 'statusUpToDate' },
@@ -238,9 +240,48 @@ export default function AuditDashboard() {
 
   // No special copy logic needed — each diff card has its own copy button for plain text
 
-  const filtered = filter === 'all' ? results : results.filter(r => r.status === filter)
-  const sortOrder: Record<string, number> = { 'outdated': 0, 'review-needed': 1, 'pending': 2, 'error': 3, 'up-to-date': 4 }
-  const sorted = [...filtered].sort((a, b) => (sortOrder[a.status] ?? 5) - (sortOrder[b.status] ?? 5))
+  async function markReviewed(caseNumber: string) {
+    try {
+      const res = await fetch('/api/mark-reviewed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caseNumber }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setResults(prev =>
+        prev.map(r => r.caseNumber === caseNumber
+          ? { ...r, reviewedAt: data.reviewedAt }
+          : r
+        )
+      )
+    } catch (e: any) {
+      setError(`Failed to mark reviewed: ${e.message}`)
+    }
+  }
+
+  const filtered = (() => {
+    if (filter === 'all') return results
+    if (filter === 'reviewed') return results.filter(r => !!r.reviewedAt)
+    return results.filter(r => r.status === filter)
+  })()
+
+  // Sort: unreviewed cases first (by severity), then reviewed cases by oldest review first
+  const statusOrder: Record<string, number> = { 'outdated': 0, 'review-needed': 1, 'pending': 2, 'error': 3, 'up-to-date': 4 }
+  const sorted = [...filtered].sort((a, b) => {
+    // Unreviewed always before reviewed
+    const aReviewed = a.reviewedAt ? 1 : 0
+    const bReviewed = b.reviewedAt ? 1 : 0
+    if (aReviewed !== bReviewed) return aReviewed - bReviewed
+
+    // Within reviewed: oldest review first (needs re-review soonest)
+    if (a.reviewedAt && b.reviewedAt) {
+      return new Date(a.reviewedAt).getTime() - new Date(b.reviewedAt).getTime()
+    }
+
+    // Within unreviewed: by status severity
+    return (statusOrder[a.status] ?? 5) - (statusOrder[b.status] ?? 5)
+  })
 
   const selectedResult = results.find(r => r.caseNumber === selectedCase)
   const selectedFullAnalysis = selectedCase ? fullAnalysis[selectedCase] : undefined
@@ -286,6 +327,7 @@ export default function AuditDashboard() {
                 <span className={styles.statGreen}>{stats.upToDate} ok</span>
                 <span className={styles.statAmber}>{stats.reviewNeeded} review</span>
                 <span className={styles.statRed}>{stats.outdated} outdated</span>
+                <span className={styles.statBlue}>{stats.reviewed} reviewed</span>
                 <span className={styles.statMuted}>{stats.pending} pending</span>
               </div>
             )}
@@ -348,12 +390,16 @@ export default function AuditDashboard() {
 
           {/* Filter bar */}
           <div className={styles.filterBar}>
-            {(['all', 'outdated', 'review-needed', 'up-to-date', 'pending', 'error'] as FilterStatus[]).map(f => {
-              const count = f === 'all' ? results.length : results.filter(r => r.status === f).length
+            {(['all', 'outdated', 'review-needed', 'up-to-date', 'reviewed', 'pending', 'error'] as FilterStatus[]).map(f => {
+              const count = f === 'all'
+                ? results.length
+                : f === 'reviewed'
+                  ? results.filter(r => !!r.reviewedAt).length
+                  : results.filter(r => r.status === f).length
               if (count === 0 && f !== 'all') return null
               const labels: Record<string, string> = {
                 'all': 'All', 'outdated': 'Outdated', 'review-needed': 'Review',
-                'up-to-date': 'OK', 'pending': 'Pending', 'error': 'Errors',
+                'up-to-date': 'OK', 'reviewed': 'Reviewed', 'pending': 'Pending', 'error': 'Errors',
               }
               return (
                 <button
@@ -389,13 +435,12 @@ export default function AuditDashboard() {
                   className={`${styles.sidebarItem} ${isActive ? styles.sidebarItemActive : ''}`}
                   onClick={() => setSelectedCase(r.caseNumber)}
                 >
-                  <div className={styles.sidebarItemTop}>
+                  <div className={styles.sidebarItemRow}>
                     <span className={styles.sidebarCaseNum}>Case {r.caseNumber}</span>
                     <span className={`${styles.statusBadgeSm} ${styles[sc.className]}`}>{sc.label}</span>
-                  </div>
-                  <div className={styles.sidebarSnippet}>
-                    {r.summary.replace(/\*\*/g, '').slice(0, 80)}
-                    {r.summary.length > 80 ? '…' : ''}
+                    {r.reviewedAt && (
+                      <span className={styles.reviewedTimestamp}>✓ {timeAgo(r.reviewedAt)}</span>
+                    )}
                   </div>
                 </div>
               )
@@ -433,8 +478,17 @@ export default function AuditDashboard() {
                     const sc = STATUS_CONFIG[selectedResult.status]
                     return <span className={`${styles.statusBadge} ${styles[sc.className]}`}>{sc.label}</span>
                   })()}
+                  {selectedResult.reviewedAt && (
+                    <span className={styles.reviewedBadge}>✓ Reviewed {timeAgo(selectedResult.reviewedAt)}</span>
+                  )}
                 </div>
                 <div className={styles.caseActions}>
+                  <button
+                    className={selectedResult.reviewedAt ? styles.reviewBtnDone : styles.reviewBtn}
+                    onClick={() => markReviewed(selectedResult.caseNumber)}
+                  >
+                    {selectedResult.reviewedAt ? `✓ Reviewed ${timeAgo(selectedResult.reviewedAt)}` : '✓ Mark reviewed'}
+                  </button>
                   <button
                     className={styles.analyseBtn}
                     onClick={() => triageSingle(selectedResult.caseNumber)}
