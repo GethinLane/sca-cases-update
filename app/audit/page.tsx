@@ -35,6 +35,28 @@ interface TriageMetadata {
   scanInProgress: boolean
 }
 
+interface FullAnalysisResult {
+  assessmentUpdated: boolean
+  managementUpdated: boolean
+  updatedAssessment: string
+  updatedManagement: string
+  changesMade: { field: string; section: string; description: string; source: string }[]
+  summary: string
+  caseNumber: string
+  triageStatus: string
+  triageSummary: string
+  citedUrls: string[]
+  searchCount: number
+  provider: string
+  model: string
+}
+
+type FullAnalysisState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'done'; data: FullAnalysisResult }
+  | { status: 'error'; message: string }
+
 type FilterStatus = 'all' | 'outdated' | 'review-needed' | 'up-to-date' | 'pending' | 'error'
 
 const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
@@ -59,6 +81,11 @@ export default function AuditDashboard() {
   const [syncing, setSyncing] = useState(false)
   const [scanFrom, setScanFrom] = useState('1')
   const [scanTo, setScanTo] = useState('10')
+
+  // Full analysis state
+  const [fullAnalysis, setFullAnalysis] = useState<Record<string, FullAnalysisState>>({})
+  const [fullAnalysisContext, setFullAnalysisContext] = useState<Record<string, string>>({})
+  const [copiedField, setCopiedField] = useState<string | null>(null)
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -176,11 +203,37 @@ export default function AuditDashboard() {
     }
   }
 
+  async function runFullAnalysis(caseNumber: string) {
+    setFullAnalysis(prev => ({ ...prev, [caseNumber]: { status: 'loading' } }))
+    try {
+      const res = await fetch('/api/full-analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          caseNumber,
+          extraContext: fullAnalysisContext[caseNumber] ?? '',
+        }),
+      })
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      setFullAnalysis(prev => ({ ...prev, [caseNumber]: { status: 'done', data } }))
+    } catch (e: any) {
+      setFullAnalysis(prev => ({ ...prev, [caseNumber]: { status: 'error', message: e.message } }))
+    }
+  }
+
+  function copyToClipboard(text: string, label: string) {
+    navigator.clipboard.writeText(text)
+    setCopiedField(label)
+    setTimeout(() => setCopiedField(null), 2000)
+  }
+
   const filtered = filter === 'all' ? results : results.filter(r => r.status === filter)
   const sortOrder: Record<string, number> = { 'outdated': 0, 'review-needed': 1, 'pending': 2, 'error': 3, 'up-to-date': 4 }
   const sorted = [...filtered].sort((a, b) => (sortOrder[a.status] ?? 5) - (sortOrder[b.status] ?? 5))
 
   const selectedResult = results.find(r => r.caseNumber === selectedCase)
+  const selectedFullAnalysis = selectedCase ? fullAnalysis[selectedCase] : undefined
 
   function timeAgo(iso: string): string {
     const diff = Date.now() - new Date(iso).getTime()
@@ -381,12 +434,15 @@ export default function AuditDashboard() {
                       ? <><span className={styles.btnSpinner} /> Scanning…</>
                       : '↺ Re-triage'}
                   </button>
-                  <Link
-                    href={`/?case=${selectedResult.caseNumber}`}
+                  <button
                     className={styles.analyseBtnSecondary}
+                    onClick={() => runFullAnalysis(selectedResult.caseNumber)}
+                    disabled={selectedFullAnalysis?.status === 'loading'}
                   >
-                    ⚡ Full analysis
-                  </Link>
+                    {selectedFullAnalysis?.status === 'loading'
+                      ? <><span className={styles.btnSpinner} /> Analysing…</>
+                      : '⚡ Full analysis'}
+                  </button>
                 </div>
               </div>
 
@@ -439,6 +495,173 @@ export default function AuditDashboard() {
                 <span>Model: <strong>{selectedResult.model || '—'}</strong></span>
                 <span>Searches: <strong>{selectedResult.searchCount}</strong></span>
                 <span>Scanned: <strong>{selectedResult.timestamp && selectedResult.status !== 'pending' ? timeAgo(selectedResult.timestamp) : '—'}</strong></span>
+              </div>
+
+              {/* ══════════════════════════════════════════════════
+                  FULL ANALYSIS SECTION
+                  ══════════════════════════════════════════════════ */}
+
+              <div className={styles.fullAnalysisSection}>
+                <div className={styles.fullAnalysisHeader}>
+                  <h2 className={styles.fullAnalysisTitle}>Full Analysis</h2>
+                  <p className={styles.fullAnalysisSubtitle}>
+                    Uses triage findings to produce updated Assessment & Management text you can copy straight into Airtable
+                  </p>
+                </div>
+
+                {/* Extra context input */}
+                <div className={styles.fullAnalysisContextBox}>
+                  <label className={styles.fullAnalysisContextLabel}>
+                    Additional context{' '}
+                    <span className={styles.fullAnalysisContextHint}>
+                      (optional — e.g. "focus on the prescribing section", "check the 2025 NICE update")
+                    </span>
+                  </label>
+                  <textarea
+                    className={styles.fullAnalysisTextarea}
+                    placeholder="Add any context to guide the analysis..."
+                    value={fullAnalysisContext[selectedResult.caseNumber] ?? ''}
+                    onChange={e =>
+                      setFullAnalysisContext(c => ({ ...c, [selectedResult.caseNumber]: e.target.value }))
+                    }
+                    rows={2}
+                  />
+                  <button
+                    className={styles.fullAnalysisRunBtn}
+                    onClick={() => runFullAnalysis(selectedResult.caseNumber)}
+                    disabled={selectedFullAnalysis?.status === 'loading'}
+                  >
+                    {selectedFullAnalysis?.status === 'loading'
+                      ? <><span className={styles.btnSpinner} /> Running full analysis…</>
+                      : selectedFullAnalysis?.status === 'done'
+                        ? '↺ Re-run full analysis'
+                        : '⚡ Run full analysis'}
+                  </button>
+                </div>
+
+                {/* Full analysis error */}
+                {selectedFullAnalysis?.status === 'error' && (
+                  <div className={styles.errorBox} style={{ marginTop: 16 }}>
+                    <strong>Full analysis failed</strong>
+                    <p>{selectedFullAnalysis.message}</p>
+                  </div>
+                )}
+
+                {/* Full analysis results */}
+                {selectedFullAnalysis?.status === 'done' && (
+                  <div className={styles.fullAnalysisResults}>
+                    {/* Summary */}
+                    <div className={styles.section}>
+                      <span className={styles.sectionTitle}>Analysis summary</span>
+                      <div className={styles.verdictText}>{selectedFullAnalysis.data.summary}</div>
+                    </div>
+
+                    {/* Changes made */}
+                    {selectedFullAnalysis.data.changesMade?.length > 0 && (
+                      <div className={styles.section}>
+                        <span className={styles.sectionTitle}>
+                          Changes made ({selectedFullAnalysis.data.changesMade.length})
+                        </span>
+                        <div className={styles.changesGrid}>
+                          {selectedFullAnalysis.data.changesMade.map((change, i) => (
+                            <div key={i} className={styles.changeCard}>
+                              <div className={styles.changeCardHeader}>
+                                <span className={styles.changeCardField}>{change.field}</span>
+                                {change.section && (
+                                  <span className={styles.changeCardSection}>{change.section}</span>
+                                )}
+                              </div>
+                              <p className={styles.changeCardDesc}>{change.description}</p>
+                              {change.source && (
+                                <a
+                                  href={change.source}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={styles.changeCardSource}
+                                >
+                                  {change.source}
+                                </a>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Updated Assessment — copyable */}
+                    {selectedFullAnalysis.data.updatedAssessment && (
+                      <div className={styles.section}>
+                        <div className={styles.updatedFieldHeader}>
+                          <span className={styles.sectionTitle}>
+                            Updated Assessment
+                            {selectedFullAnalysis.data.assessmentUpdated
+                              ? <span className={styles.updatedBadge}>Modified</span>
+                              : <span className={styles.unchangedBadge}>No changes</span>}
+                          </span>
+                          <button
+                            className={styles.copyFieldBtn}
+                            onClick={() => copyToClipboard(
+                              selectedFullAnalysis.data.updatedAssessment,
+                              'assessment'
+                            )}
+                          >
+                            {copiedField === 'assessment' ? '✓ Copied!' : 'Copy Assessment'}
+                          </button>
+                        </div>
+                        <pre className={styles.updatedFieldText}>
+                          {selectedFullAnalysis.data.updatedAssessment}
+                        </pre>
+                      </div>
+                    )}
+
+                    {/* Updated Management — copyable */}
+                    {selectedFullAnalysis.data.updatedManagement && (
+                      <div className={styles.section}>
+                        <div className={styles.updatedFieldHeader}>
+                          <span className={styles.sectionTitle}>
+                            Updated Management
+                            {selectedFullAnalysis.data.managementUpdated
+                              ? <span className={styles.updatedBadge}>Modified</span>
+                              : <span className={styles.unchangedBadge}>No changes</span>}
+                          </span>
+                          <button
+                            className={styles.copyFieldBtn}
+                            onClick={() => copyToClipboard(
+                              selectedFullAnalysis.data.updatedManagement,
+                              'management'
+                            )}
+                          >
+                            {copiedField === 'management' ? '✓ Copied!' : 'Copy Management'}
+                          </button>
+                        </div>
+                        <pre className={styles.updatedFieldText}>
+                          {selectedFullAnalysis.data.updatedManagement}
+                        </pre>
+                      </div>
+                    )}
+
+                    {/* Sources */}
+                    {selectedFullAnalysis.data.citedUrls?.length > 0 && (
+                      <div className={styles.section}>
+                        <span className={styles.sectionTitle}>Sources accessed</span>
+                        <ul className={styles.sourceList}>
+                          {selectedFullAnalysis.data.citedUrls.map((url, i) => (
+                            <li key={i}>
+                              <a href={url} target="_blank" rel="noopener noreferrer">{url}</a>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Meta */}
+                    <div className={styles.metaBar}>
+                      <span>Provider: <strong>{selectedFullAnalysis.data.provider || '—'}</strong></span>
+                      <span>Model: <strong>{selectedFullAnalysis.data.model || '—'}</strong></span>
+                      <span>Searches: <strong>{selectedFullAnalysis.data.searchCount}</strong></span>
+                    </div>
+                  </div>
+                )}
               </div>
             </>
           )}
