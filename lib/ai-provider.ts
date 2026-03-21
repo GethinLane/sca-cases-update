@@ -34,7 +34,7 @@ async function callAnthropic(
     },
     body: JSON.stringify({
       model,
-      max_tokens: 3024,
+      max_tokens: 5000,
       system: [
         {
           type: 'text',
