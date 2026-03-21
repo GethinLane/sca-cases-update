@@ -41,14 +41,14 @@ export async function POST(req: NextRequest) {
     let assessmentText = ''
     let managementText = ''
 
-for (const [key, value] of Object.entries(fields)) {
-    if (key === 'Assessment') {
+    for (const [key, value] of Object.entries(fields)) {
+      if (key === 'Assessment') {
         assessmentText += (assessmentText ? '\n\n' : '') + value
-    }
-    if (key === 'Management') {
+      }
+      if (key === 'Management') {
         managementText += (managementText ? '\n\n' : '') + value
+      }
     }
-}
 
     if (!assessmentText && !managementText) {
       const errorResult: TriageResult = {
@@ -71,7 +71,7 @@ for (const [key, value] of Object.entries(fields)) {
 
     const aiResult = await callTriageAI(TRIAGE_SYSTEM_PROMPT, userPrompt, maxSearches)
 
-// Parse the JSON response — extract JSON even if surrounded by text
+    // Parse the JSON response — extract JSON even if surrounded by text
     let parsed: any
     try {
       let clean = aiResult.textOutput
@@ -102,8 +102,9 @@ for (const [key, value] of Object.entries(fields)) {
         provider: aiResult.provider,
         model: aiResult.model,
         timestamp: new Date().toISOString(),
-assessmentSnippet: assessmentText,
-managementSnippet: managementText,
+        assessmentSnippet: assessmentText,
+        managementSnippet: managementText,
+        fullCaseFields: caseData.fields,
       }
       await saveTriageResult(fallback)
       return NextResponse.json(fallback)
@@ -119,13 +120,14 @@ managementSnippet: managementText,
       summary: `${parsed.topic ? `**${parsed.topic}** — ` : ''}${parsed.summary ?? 'No summary provided'}${parsed.confidence ? ` (Confidence: ${parsed.confidence})` : ''}`,
       searchCount: aiResult.searchCount,
       citedUrls: parsed.keySource
-        ? [parsed.keySource, ...aiResult.citedUrls.filter(u => u !== parsed.keySource)]
+        ? [parsed.keySource, ...aiResult.citedUrls.filter((u: string) => u !== parsed.keySource)]
         : aiResult.citedUrls,
       provider: aiResult.provider,
       model: aiResult.model,
       timestamp: new Date().toISOString(),
-assessmentSnippet: assessmentText,
-managementSnippet: managementText,
+      assessmentSnippet: assessmentText,
+      managementSnippet: managementText,
+      fullCaseFields: caseData.fields,
     }
 
     await saveTriageResult(result)
