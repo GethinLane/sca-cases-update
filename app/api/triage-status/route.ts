@@ -20,6 +20,7 @@ export async function GET() {
       outdated: results.filter(r => r.status === 'outdated').length,
       errors: results.filter(r => r.status === 'error').length,
       pending: results.filter(r => r.status === 'pending').length,
+      reviewed: results.filter(r => !!r.reviewedAt).length,
       totalSearches: results.reduce((sum, r) => sum + (r.searchCount ?? 0), 0),
     }
 
