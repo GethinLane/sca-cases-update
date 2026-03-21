@@ -56,6 +56,7 @@ interface FullAnalysisResult {
   fieldChanges: FullAnalysisFieldChange[]
   sources: FullAnalysisSource[]
   caseNumber: string
+  fieldNames: string
   triageStatus: string
   triageSummary: string
   citedUrls: string[]
@@ -514,7 +515,7 @@ export default function AuditDashboard() {
                 <div className={styles.fullAnalysisHeader}>
                   <h2 className={styles.fullAnalysisTitle}>Full Analysis</h2>
                   <p className={styles.fullAnalysisSubtitle}>
-                    Uses triage findings to identify specific changes needed, with before/after text you can find-and-replace in Airtable
+                    Reviews every field in the case — Assessment, Management, Marking Criteria, History, Explanation and more — against current UK guidelines
                   </p>
                 </div>
 
@@ -582,6 +583,14 @@ export default function AuditDashboard() {
                         {selectedFullAnalysis.data.summary}
                       </span>
                     </div>
+
+                    {/* Fields reviewed */}
+                    {selectedFullAnalysis.data.fieldNames && (
+                      <div className={styles.fieldsReviewedBar}>
+                        <span className={styles.fieldsReviewedLabel}>Fields reviewed:</span>
+                        <span className={styles.fieldsReviewedList}>{selectedFullAnalysis.data.fieldNames}</span>
+                      </div>
+                    )}
 
                     {/* Field changes — diff cards */}
                     <div className={styles.section}>
