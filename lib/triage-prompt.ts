@@ -26,9 +26,10 @@ CRITICAL RULES:
 - Do NOT include any text outside the JSON object`
 
 export function buildTriageUserPrompt(caseNumber: string, assessmentText: string, managementText: string): string {
-  // Cap the text to avoid token bloat
-  const assessment = (assessmentText || 'No assessment field found').slice(0, 4000)
-  const management = (managementText || 'No management field found').slice(0, 4000)
+  // Send the full text — no arbitrary truncation. Only cap at 15000 to stay within
+  // token limits for very large cases (most cases are well under this).
+  const assessment = (assessmentText || 'No assessment field found').slice(0, 15000)
+  const management = (managementText || 'No management field found').slice(0, 15000)
 
   return `CASE ${caseNumber}
 
