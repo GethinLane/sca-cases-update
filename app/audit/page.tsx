@@ -35,13 +35,26 @@ interface TriageMetadata {
   scanInProgress: boolean
 }
 
+interface FullAnalysisFieldChange {
+  fieldName: string
+  currentText: string
+  issue: string
+  suggestedText: string
+  confidence: 'high' | 'medium' | 'low'
+  source: string
+}
+
+interface FullAnalysisSource {
+  title: string
+  url: string
+  finding: string
+}
+
 interface FullAnalysisResult {
-  assessmentUpdated: boolean
-  managementUpdated: boolean
-  updatedAssessment: string
-  updatedManagement: string
-  changesMade: { field: string; section: string; description: string; source: string }[]
+  verdict: 'up-to-date' | 'changes-needed'
   summary: string
+  fieldChanges: FullAnalysisFieldChange[]
+  sources: FullAnalysisSource[]
   caseNumber: string
   triageStatus: string
   triageSummary: string
@@ -222,11 +235,7 @@ export default function AuditDashboard() {
     }
   }
 
-  function copyToClipboard(text: string, label: string) {
-    navigator.clipboard.writeText(text)
-    setCopiedField(label)
-    setTimeout(() => setCopiedField(null), 2000)
-  }
+  // No special copy logic needed — each diff card has its own copy button for plain text
 
   const filtered = filter === 'all' ? results : results.filter(r => r.status === filter)
   const sortOrder: Record<string, number> = { 'outdated': 0, 'review-needed': 1, 'pending': 2, 'error': 3, 'up-to-date': 4 }
@@ -505,7 +514,7 @@ export default function AuditDashboard() {
                 <div className={styles.fullAnalysisHeader}>
                   <h2 className={styles.fullAnalysisTitle}>Full Analysis</h2>
                   <p className={styles.fullAnalysisSubtitle}>
-                    Uses triage findings to produce updated Assessment & Management text you can copy straight into Airtable
+                    Uses triage findings to identify specific changes needed, with before/after text you can find-and-replace in Airtable
                   </p>
                 </div>
 
@@ -550,37 +559,132 @@ export default function AuditDashboard() {
                 {/* Full analysis results */}
                 {selectedFullAnalysis?.status === 'done' && (
                   <div className={styles.fullAnalysisResults}>
-                    {/* Summary */}
-                    <div className={styles.section}>
-                      <span className={styles.sectionTitle}>Analysis summary</span>
-                      <div className={styles.verdictText}>{selectedFullAnalysis.data.summary}</div>
+                    {/* Verdict banner */}
+                    <div
+                      className={styles.fullAnalysisVerdictBanner}
+                      style={{
+                        background: selectedFullAnalysis.data.verdict === 'up-to-date' ? '#f0fdf4' : '#fffbeb',
+                        borderColor: selectedFullAnalysis.data.verdict === 'up-to-date' ? '#bbf7d0' : '#fde68a',
+                      }}
+                    >
+                      <span
+                        className={styles.fullAnalysisVerdictDot}
+                        style={{
+                          background: selectedFullAnalysis.data.verdict === 'up-to-date' ? '#16a34a' : '#d97706',
+                        }}
+                      />
+                      <strong style={{
+                        color: selectedFullAnalysis.data.verdict === 'up-to-date' ? '#16a34a' : '#d97706',
+                      }}>
+                        {selectedFullAnalysis.data.verdict === 'up-to-date' ? 'Up to date' : 'Changes needed'}
+                      </strong>
+                      <span className={styles.fullAnalysisVerdictText}>
+                        {selectedFullAnalysis.data.summary}
+                      </span>
                     </div>
 
-                    {/* Changes made */}
-                    {selectedFullAnalysis.data.changesMade?.length > 0 && (
-                      <div className={styles.section}>
-                        <span className={styles.sectionTitle}>
-                          Changes made ({selectedFullAnalysis.data.changesMade.length})
-                        </span>
-                        <div className={styles.changesGrid}>
-                          {selectedFullAnalysis.data.changesMade.map((change, i) => (
-                            <div key={i} className={styles.changeCard}>
-                              <div className={styles.changeCardHeader}>
-                                <span className={styles.changeCardField}>{change.field}</span>
-                                {change.section && (
-                                  <span className={styles.changeCardSection}>{change.section}</span>
+                    {/* Field changes — diff cards */}
+                    <div className={styles.section}>
+                      <span className={styles.sectionTitle}>
+                        {selectedFullAnalysis.data.fieldChanges?.length > 0
+                          ? `Suggested changes (${selectedFullAnalysis.data.fieldChanges.length})`
+                          : 'Field changes'}
+                      </span>
+                      {selectedFullAnalysis.data.fieldChanges?.length > 0 ? (
+                        <div className={styles.fieldChanges}>
+                          {selectedFullAnalysis.data.fieldChanges.map((fc, i) => {
+                            const confColors: Record<string, { color: string; bg: string }> = {
+                              high:   { color: '#15803d', bg: '#dcfce7' },
+                              medium: { color: '#b45309', bg: '#fef3c7' },
+                              low:    { color: '#b91c1c', bg: '#fee2e2' },
+                            }
+                            const cc = confColors[fc.confidence] ?? confColors.medium
+                            return (
+                              <div key={i} className={styles.fieldCard}>
+                                <div className={styles.fieldCardHeader}>
+                                  <span className={styles.fieldName}>{fc.fieldName}</span>
+                                  <span
+                                    className={styles.confidencePill}
+                                    style={{ color: cc.color, background: cc.bg }}
+                                  >
+                                    {fc.confidence} confidence
+                                  </span>
+                                </div>
+                                <p className={styles.fieldIssue}>{fc.issue}</p>
+                                {fc.source && (
+                                  <a
+                                    href={fc.source}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className={styles.fieldSource}
+                                  >
+                                    {fc.source}
+                                  </a>
                                 )}
+                                <div className={styles.diffRow}>
+                                  <div className={`${styles.diffBox} ${styles.diffBefore}`}>
+                                    <div className={styles.diffLabelRow}>
+                                      <span className={styles.diffLabel}>Current</span>
+                                      <button
+                                        className={styles.diffCopyBtn}
+                                        onClick={() => {
+                                          navigator.clipboard.writeText(fc.currentText)
+                                          setCopiedField(`current-${i}`)
+                                          setTimeout(() => setCopiedField(null), 1500)
+                                        }}
+                                      >
+                                        {copiedField === `current-${i}` ? '✓' : 'Copy'}
+                                      </button>
+                                    </div>
+                                    <p className={styles.diffText}>{fc.currentText}</p>
+                                  </div>
+                                  <div className={styles.diffArrow}>→</div>
+                                  <div className={`${styles.diffBox} ${styles.diffAfter}`}>
+                                    <div className={styles.diffLabelRow}>
+                                      <span className={styles.diffLabel}>Suggested</span>
+                                      <button
+                                        className={styles.diffCopyBtn}
+                                        onClick={() => {
+                                          navigator.clipboard.writeText(fc.suggestedText)
+                                          setCopiedField(`suggested-${i}`)
+                                          setTimeout(() => setCopiedField(null), 1500)
+                                        }}
+                                      >
+                                        {copiedField === `suggested-${i}` ? '✓' : 'Copy'}
+                                      </button>
+                                    </div>
+                                    <p className={styles.diffText}>{fc.suggestedText}</p>
+                                  </div>
+                                </div>
                               </div>
-                              <p className={styles.changeCardDesc}>{change.description}</p>
-                              {change.source && (
-                                <a
-                                  href={change.source}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className={styles.changeCardSource}
-                                >
-                                  {change.source}
-                                </a>
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        <p className={styles.noChanges}>No specific field changes recommended — case appears up to date.</p>
+                      )}
+                    </div>
+
+                    {/* Sources */}
+                    {selectedFullAnalysis.data.sources?.length > 0 && (
+                      <div className={styles.section}>
+                        <span className={styles.sectionTitle}>Sources verified</span>
+                        <div className={styles.sourcesGrid}>
+                          {selectedFullAnalysis.data.sources.map((src, i) => (
+                            <div key={i} className={styles.sourceCard}>
+                              <div className={styles.sourceCardHeader}>
+                                <span className={styles.sourceCardTitle}>{src.title}</span>
+                              </div>
+                              <a
+                                href={src.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className={styles.sourceCardUrl}
+                              >
+                                {src.url}
+                              </a>
+                              {src.finding && (
+                                <p className={styles.sourceCardFinding}>{src.finding}</p>
                               )}
                             </div>
                           ))}
@@ -588,62 +692,10 @@ export default function AuditDashboard() {
                       </div>
                     )}
 
-                    {/* Updated Assessment — copyable */}
-                    {selectedFullAnalysis.data.updatedAssessment && (
-                      <div className={styles.section}>
-                        <div className={styles.updatedFieldHeader}>
-                          <span className={styles.sectionTitle}>
-                            Updated Assessment
-                            {selectedFullAnalysis.data.assessmentUpdated
-                              ? <span className={styles.updatedBadge}>Modified</span>
-                              : <span className={styles.unchangedBadge}>No changes</span>}
-                          </span>
-                          <button
-                            className={styles.copyFieldBtn}
-                            onClick={() => copyToClipboard(
-                              selectedFullAnalysis.data.updatedAssessment,
-                              'assessment'
-                            )}
-                          >
-                            {copiedField === 'assessment' ? '✓ Copied!' : 'Copy Assessment'}
-                          </button>
-                        </div>
-                        <pre className={styles.updatedFieldText}>
-                          {selectedFullAnalysis.data.updatedAssessment}
-                        </pre>
-                      </div>
-                    )}
-
-                    {/* Updated Management — copyable */}
-                    {selectedFullAnalysis.data.updatedManagement && (
-                      <div className={styles.section}>
-                        <div className={styles.updatedFieldHeader}>
-                          <span className={styles.sectionTitle}>
-                            Updated Management
-                            {selectedFullAnalysis.data.managementUpdated
-                              ? <span className={styles.updatedBadge}>Modified</span>
-                              : <span className={styles.unchangedBadge}>No changes</span>}
-                          </span>
-                          <button
-                            className={styles.copyFieldBtn}
-                            onClick={() => copyToClipboard(
-                              selectedFullAnalysis.data.updatedManagement,
-                              'management'
-                            )}
-                          >
-                            {copiedField === 'management' ? '✓ Copied!' : 'Copy Management'}
-                          </button>
-                        </div>
-                        <pre className={styles.updatedFieldText}>
-                          {selectedFullAnalysis.data.updatedManagement}
-                        </pre>
-                      </div>
-                    )}
-
-                    {/* Sources */}
+                    {/* All cited URLs */}
                     {selectedFullAnalysis.data.citedUrls?.length > 0 && (
                       <div className={styles.section}>
-                        <span className={styles.sectionTitle}>Sources accessed</span>
+                        <span className={styles.sectionTitle}>All URLs accessed ({selectedFullAnalysis.data.citedUrls.length})</span>
                         <ul className={styles.sourceList}>
                           {selectedFullAnalysis.data.citedUrls.map((url, i) => (
                             <li key={i}>

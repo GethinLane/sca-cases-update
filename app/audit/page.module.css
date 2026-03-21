@@ -520,135 +520,226 @@
   margin-top: 24px;
 }
 
-/* ── Changes grid ── */
-.changesGrid {
+/* ── Field change diff cards (matches feedback page pattern) ── */
+.fieldChanges {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
-.changeCard {
-  background: white;
+.fieldCard {
   border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
-  border-radius: 0 10px 10px 0;
-  padding: 14px 16px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
 }
 
-.changeCardHeader {
+.fieldCardHeader {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--navy-dark);
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
-.changeCardField {
-  font-size: 12px;
-  font-weight: 700;
-  color: white;
-  background: var(--navy);
-  border-radius: 4px;
-  padding: 2px 8px;
-}
-
-.changeCardSection {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-  font-family: monospace;
-}
-
-.changeCardDesc {
+.fieldName {
   font-size: 13px;
-  color: var(--text-body);
-  line-height: 1.5;
-  margin: 0 0 6px;
+  font-weight: 700;
+  font-family: monospace;
+  color: #fff;
 }
 
-.changeCardSource {
+.confidencePill {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.fieldIssue {
+  font-size: 13px;
+  color: #4a5568;
+  padding: 12px 16px 0;
+  margin: 0;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.fieldSource {
+  display: block;
   font-size: 11px;
   color: var(--accent);
   text-decoration: none;
   word-break: break-all;
+  padding: 6px 16px 0;
 }
 
-.changeCardSource:hover {
+.fieldSource:hover {
   text-decoration: underline;
 }
 
-/* ── Updated field display ── */
-.updatedFieldHeader {
+.diffRow {
+  display: grid;
+  grid-template-columns: 1fr 28px 1fr;
+  align-items: start;
+  gap: 8px;
+  padding: 12px 16px 16px;
+}
+
+.diffArrow {
+  text-align: center;
+  color: var(--accent);
+  padding-top: 32px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.diffBox {
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.diffBefore {
+  background: #fff5f5;
+  border: 1px solid #fecaca;
+}
+
+.diffAfter {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
+.diffLabelRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 6px;
 }
 
-.updatedFieldHeader .sectionTitle {
-  margin: 0;
-  padding-bottom: 0;
-  border-bottom: none;
-}
-
-.updatedBadge {
+.diffLabel {
   font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
   font-weight: 700;
-  color: #b45309;
-  background: #fef3c7;
-  border: 1px solid #fde68a;
-  border-radius: 10px;
-  padding: 2px 8px;
-  text-transform: none;
-  letter-spacing: 0;
-  margin-left: 8px;
+  color: #999;
 }
 
-.unchangedBadge {
+.diffCopyBtn {
   font-size: 10px;
-  font-weight: 700;
-  color: #15803d;
-  background: #dcfce7;
-  border: 1px solid #bbf7d0;
-  border-radius: 10px;
-  padding: 2px 8px;
-  text-transform: none;
-  letter-spacing: 0;
-  margin-left: 8px;
-}
-
-.copyFieldBtn {
-  font-size: 13px;
   font-weight: 700;
   font-family: 'Nunito Sans', sans-serif;
-  color: white;
-  background: var(--navy);
-  border: none;
-  border-radius: 6px;
-  padding: 8px 16px;
-  cursor: pointer;
-  transition: background 0.15s;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.copyFieldBtn:hover {
-  background: var(--accent);
-}
-
-.updatedFieldText {
-  font-size: 13px;
-  line-height: 1.65;
-  color: var(--text-body);
-  background: white;
+  color: var(--text-muted);
+  background: rgba(0,0,0,0.05);
   border: 1px solid var(--border);
-  border-left: 4px solid var(--green);
-  border-radius: 0 10px 10px 0;
-  padding: 20px;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.diffCopyBtn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.diffText {
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+  color: var(--text-body);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.noChanges {
+  font-size: 14px;
+  color: #16a34a;
+  font-style: italic;
   margin: 0;
-  font-family: 'Nunito Sans', sans-serif;
-  max-height: 500px;
-  overflow-y: auto;
+}
+
+/* ── Full analysis verdict banner ── */
+.fullAnalysisVerdictBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 10px;
+  border: 1px solid;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.fullAnalysisVerdictDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.fullAnalysisVerdictBanner strong {
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.fullAnalysisVerdictText {
+  font-size: 14px;
+  color: #444;
+  line-height: 1.5;
+}
+
+/* ── Source cards ── */
+.sourcesGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sourceCard {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  transition: border-color 0.15s;
+}
+
+.sourceCard:hover {
+  border-color: var(--accent-light);
+}
+
+.sourceCardHeader {
+  margin-bottom: 6px;
+}
+
+.sourceCardTitle {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-dark);
+}
+
+.sourceCardUrl {
+  display: block;
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--accent);
+  text-decoration: none;
+  word-break: break-all;
+  margin-bottom: 6px;
+}
+
+.sourceCardUrl:hover {
+  text-decoration: underline;
+}
+
+.sourceCardFinding {
+  font-size: 13px;
+  color: var(--text-body);
+  line-height: 1.5;
+  margin: 0;
+  font-style: italic;
 }
