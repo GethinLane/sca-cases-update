@@ -45,8 +45,25 @@ FORMATTING RULES FOR suggestedText:
 - suggestedText must be a DROP-IN REPLACEMENT for currentText — same formatting, same structure, just corrected content.
 
 CLINICAL RULES:
-- Only suggest changes supported by current UK guidelines (NICE CKS, BNF, NICE guidelines, specialist society guidelines)
-- Search the web to verify — always check cks.nice.org.uk first, then specialist sources as needed
+- Only suggest changes supported by current UK guidelines
+- You MUST search MULTIPLE source types for each clinical topic:
+  1. NICE CKS (cks.nice.org.uk) — always search this first for primary care overview
+  2. The RELEVANT SPECIALIST SOCIETY for the topic — this is MANDATORY, not optional. Examples:
+     - Dermatology → search bad.org.uk (British Association of Dermatologists) AND pcds.org.uk (Primary Care Dermatology Society)
+     - Respiratory → search brit-thoracic.org.uk (BTS) AND asthma.org.uk
+     - Cardiology → search escardio.org AND bhf.org.uk
+     - Women's health → search rcog.org.uk AND thebms.org.uk AND fsrh.org
+     - Mental health → search rcpsych.ac.uk AND bap.org.uk
+     - Gastro → search bsg.org.uk
+     - Rheumatology → search rheumatology.org.uk
+     - Endocrine → search british-thyroid-association.org AND abcd.care
+     - ENT → search entuk.org
+     - Urology → search baus.org.uk
+     - Sexual health → search bashh.org
+     - Paediatrics → search rcpch.ac.uk
+     (Use whichever are relevant to the specific case topic)
+  3. BNF (bnf.nice.org.uk) — for any prescribing, dosing, or drug interaction queries
+- Do NOT rely solely on NICE. Specialist societies often have more detailed and more current guidance on specific conditions.
 - Be specific about what needs changing and why
 - If a field is correct, don't include it in fieldChanges
 - If the ENTIRE case is up-to-date across all fields, return an empty fieldChanges array
@@ -145,10 +162,15 @@ ${extraContext}
 
 ---
 ` : ''}
-Review EVERY field in this case for clinical accuracy against current UK guidelines. Search the web to verify. Return specific before/after changes for any text that needs correcting, across ANY field. Do NOT rewrite entire fields — just the specific snippets that need updating.`
+Review EVERY field in this case for clinical accuracy against current UK guidelines. You MUST search:
+1. NICE CKS for the main condition
+2. The relevant specialist society guidelines (e.g. BAD/PCDS for dermatology, BTS for respiratory, etc.)
+3. BNF if any prescribing or dosing is mentioned
 
-    // More searches needed since we're reviewing the entire case
-    const maxSearches = parseInt(process.env.FULL_ANALYSIS_MAX_SEARCHES ?? process.env.TRIAGE_MAX_SEARCHES ?? '8')
+Return specific before/after changes for any text that needs correcting, across ANY field. Do NOT rewrite entire fields — just the specific snippets that need updating.`
+
+    // More searches needed — NICE CKS + specialist society + BNF minimum
+    const maxSearches = parseInt(process.env.FULL_ANALYSIS_MAX_SEARCHES ?? process.env.TRIAGE_MAX_SEARCHES ?? '12')
     const aiResult = await callTriageAI(FULL_ANALYSIS_SYSTEM_PROMPT, userPrompt, maxSearches)
 
     // Parse the JSON response
