@@ -1,7 +1,7 @@
 // app/api/full-analysis/route.ts
 // Takes a case number, loads its triage result (with stored case data),
-// and runs a deep analysis that produces updated Assessment/Management
-// text in Airtable-compatible format (#### for H4 headings).
+// and runs a deep analysis that returns field-by-field change suggestions
+// (currentText → suggestedText) — NOT the full replacement text.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getTriageResult } from '@/lib/triage-store'
@@ -17,42 +17,52 @@ You have been given:
 2. A triage summary from a previous scan that identified potential guideline issues
 3. The current Assessment and Management text from the case
 
-Your job: Produce UPDATED versions of the Assessment and Management fields that correct any guideline issues found in the triage, while preserving the existing structure and format.
+Your job: Identify ONLY the specific parts of the Assessment and/or Management that need changing, and provide exact before/after text for each change.
 
-FORMATTING RULES — THIS IS CRITICAL:
-- The text will be pasted directly into Airtable with rich text formatting enabled
-- Use #### (four hashes) for H4 headings — this is the ONLY heading level used in these cases
-- Preserve ALL existing headings, sections and structure from the original text
-- Only change the specific clinical content that needs updating
-- Keep the same writing style and tone as the original
-- Use bullet points (- ) where the original uses them
-- Use numbered lists (1. ) where the original uses them
-- Bold text uses **double asterisks**
-- If a section is clinically correct, keep it EXACTLY as-is — do not rephrase correct content
+DO NOT rewrite the entire field. Only output the specific snippets that need to change.
+
+FORMATTING RULES FOR suggestedText:
+- The text will be pasted into Airtable which has rich text formatting enabled
+- Airtable interprets standard markdown: **bold**, *italic*, - bullet points, 1. numbered lists
+- EXCEPT for H4 headings: Airtable does NOT render #### as a heading. It displays the literal text "#### Heading Name" as a visual heading convention. You MUST keep #### exactly as-is in suggestedText if the original uses it.
+- Match the exact formatting conventions of the original: if it uses ####, use ####. If it uses bold headings, use bold headings. If it uses bullets, use bullets.
+- suggestedText must be a DROP-IN REPLACEMENT for currentText — same formatting style, same structure, just corrected content.
 
 CLINICAL RULES:
-- Only make changes that are supported by current UK guidelines (NICE CKS, BNF, NICE guidelines)
+- Only suggest changes that are supported by current UK guidelines (NICE CKS, BNF, NICE guidelines)
 - Reference the triage findings to focus your changes
-- Search the web to verify any updates you make — always check cks.nice.org.uk
-- Be specific about what you changed and why
-- If the triage found the case is up-to-date, confirm this and return the original text unchanged
+- Search the web to verify any changes you suggest — always check cks.nice.org.uk
+- Be specific about what needs changing and why
+- If the case is fully up-to-date, return an empty fieldChanges array
 
 Respond ONLY with a valid JSON object (no markdown fences, no preamble):
 {
-  "assessmentUpdated": true | false,
-  "managementUpdated": true | false,
-  "updatedAssessment": "The full updated Assessment text in Airtable format, or the original if no changes needed",
-  "updatedManagement": "The full updated Management text in Airtable format, or the original if no changes needed",
-  "changesMade": [
+  "verdict": "up-to-date" | "changes-needed",
+  "summary": "A brief paragraph summarising what needs updating and why, or confirming the case is correct. Reference specific clinical details.",
+  "fieldChanges": [
     {
-      "field": "Assessment" | "Management",
-      "section": "Which heading/section was changed",
-      "description": "What was changed and why",
+      "fieldName": "Assessment" | "Management",
+      "currentText": "The EXACT current text snippet that needs changing — copy it verbatim from the case content, including any markdown formatting (####, **, - etc). Include enough surrounding context (a full paragraph or section) so the reviewer can find it easily.",
+      "issue": "What is wrong with this text and why it needs changing — reference the specific guideline",
+      "suggestedText": "The replacement text, formatted identically to the original (same markdown style, same structure) but with the clinical content corrected. This should be a direct drop-in replacement for currentText.",
+      "confidence": "high" | "medium" | "low",
       "source": "URL of the guideline that supports this change"
     }
   ],
-  "summary": "A brief paragraph summarising what was updated and why, or confirming the case is correct"
-}`
+  "sources": [
+    {
+      "title": "Short descriptive title, e.g. NICE CKS: Acne vulgaris",
+      "url": "The actual URL you accessed",
+      "finding": "One sentence summary of what this source confirmed or contradicted"
+    }
+  ]
+}
+
+IMPORTANT:
+- Each fieldChange should cover ONE specific issue. If multiple sentences in a paragraph need changing, include the whole paragraph as currentText and fix all issues in suggestedText.
+- currentText must be an EXACT match to what appears in the case — the reviewer will use find-and-replace.
+- If nothing needs changing, return "verdict": "up-to-date" with an empty fieldChanges array.
+- Keep the number of fieldChanges minimal — only what actually needs correcting.`
 
 export async function POST(req: NextRequest) {
   try {
@@ -113,12 +123,12 @@ ${allFieldsText}
 
 ---
 
-CURRENT ASSESSMENT TEXT (this is what you need to update if needed):
+CURRENT ASSESSMENT TEXT:
 ${assessmentText}
 
 ---
 
-CURRENT MANAGEMENT TEXT (this is what you need to update if needed):
+CURRENT MANAGEMENT TEXT:
 ${managementText}
 
 ---
@@ -128,7 +138,7 @@ ${extraContext}
 
 ---
 ` : ''}
-Please review this case using the triage findings above. Search the web to verify the current guidelines for the relevant condition. Then produce updated Assessment and Management text that corrects any issues, preserving the exact formatting (#### for H4 headings, bullet points, numbered lists etc). If the case is correct, return the original text unchanged.`
+Review this case using the triage findings above. Search the web to verify the current guidelines. Then identify ONLY the specific text snippets that need changing and provide exact before/after replacements. Do NOT rewrite the entire fields — just the parts that need correcting.`
 
     const maxSearches = parseInt(process.env.TRIAGE_MAX_SEARCHES ?? '5')
     const aiResult = await callTriageAI(FULL_ANALYSIS_SYSTEM_PROMPT, userPrompt, maxSearches)
@@ -146,7 +156,7 @@ Please review this case using the triage findings above. Search the web to verif
       try {
         parsed = JSON.parse(clean)
       } catch {
-        const jsonMatch = clean.match(/\{[\s\S]*"updatedAssessment"\s*:[\s\S]*"updatedManagement"\s*:[\s\S]*\}/)
+        const jsonMatch = clean.match(/\{[\s\S]*"fieldChanges"\s*:[\s\S]*\}/)
         if (jsonMatch) {
           parsed = JSON.parse(jsonMatch[0])
         } else {
