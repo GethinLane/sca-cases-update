@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import styles from './page.module.css'
 
@@ -83,6 +83,9 @@ const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
   'pending': { label: 'Pending', className: 'statusPending' },
 }
 
+// 6 per minute = 1 every 10 seconds (start-to-start)
+const SCAN_INTERVAL_MS = 10000
+
 export default function AuditDashboard() {
   const [results, setResults] = useState<TriageResult[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
@@ -97,11 +100,17 @@ export default function AuditDashboard() {
   const [syncing, setSyncing] = useState(false)
   const [scanFrom, setScanFrom] = useState('1')
   const [scanTo, setScanTo] = useState('10')
+  const [scanPaused, setScanPaused] = useState(false)
+  const [nextScanIn, setNextScanIn] = useState<number | null>(null)
 
   // Full analysis state
   const [fullAnalysis, setFullAnalysis] = useState<Record<string, FullAnalysisState>>({})
   const [fullAnalysisContext, setFullAnalysisContext] = useState<Record<string, string>>({})
   const [copiedField, setCopiedField] = useState<string | null>(null)
+
+  // Refs for pause/stop control (must survive re-renders)
+  const scanAbortRef = useRef(false)
+  const scanPauseRef = useRef(false)
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -120,6 +129,15 @@ export default function AuditDashboard() {
   }, [])
 
   useEffect(() => { fetchStatus() }, [fetchStatus])
+
+  // Countdown timer for next scan
+  useEffect(() => {
+    if (nextScanIn === null || nextScanIn <= 0) return
+    const interval = setInterval(() => {
+      setNextScanIn(prev => (prev !== null && prev > 0) ? prev - 1 : null)
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [nextScanIn])
 
   async function syncCases() {
     setSyncing(true)
@@ -158,6 +176,9 @@ export default function AuditDashboard() {
     }
 
     setScanning(true)
+    setScanPaused(false)
+    scanAbortRef.current = false
+    scanPauseRef.current = false
     setError(null)
 
     const targets: string[] = []
@@ -168,6 +189,18 @@ export default function AuditDashboard() {
     setScanProgress({ current: 0, total: targets.length })
 
     for (let i = 0; i < targets.length; i++) {
+      // Check for stop
+      if (scanAbortRef.current) break
+
+      // Check for pause — wait until resumed
+      while (scanPauseRef.current) {
+        await new Promise(r => setTimeout(r, 500))
+        if (scanAbortRef.current) break
+      }
+      if (scanAbortRef.current) break
+
+      const startTime = Date.now()
+
       setResults(prev =>
         prev.map(r => r.caseNumber === targets[i]
           ? { ...r, status: 'pending' as const, summary: 'Scanning…' }
@@ -189,13 +222,56 @@ export default function AuditDashboard() {
 
       setScanProgress({ current: i + 1, total: targets.length })
 
+      // Wait for the remainder of the 10-second interval (start-to-start)
       if (i < targets.length - 1) {
-        await new Promise(r => setTimeout(r, 2000))
+        const elapsed = Date.now() - startTime
+        const waitTime = Math.max(0, SCAN_INTERVAL_MS - elapsed)
+
+        if (waitTime > 0) {
+          // Show countdown
+          setNextScanIn(Math.ceil(waitTime / 1000))
+
+          // Wait in 1-second increments so we can respond to pause/stop
+          const waitEnd = Date.now() + waitTime
+          while (Date.now() < waitEnd) {
+            if (scanAbortRef.current) break
+            while (scanPauseRef.current) {
+              setNextScanIn(null)
+              await new Promise(r => setTimeout(r, 500))
+              if (scanAbortRef.current) break
+            }
+            if (scanAbortRef.current) break
+            const remaining = Math.ceil((waitEnd - Date.now()) / 1000)
+            if (remaining > 0) setNextScanIn(remaining)
+            await new Promise(r => setTimeout(r, 1000))
+          }
+          setNextScanIn(null)
+        }
       }
     }
 
     setScanning(false)
+    setScanPaused(false)
+    setNextScanIn(null)
     await fetchStatus()
+  }
+
+  function stopScan() {
+    scanAbortRef.current = true
+    scanPauseRef.current = false
+    setScanPaused(false)
+    setNextScanIn(null)
+  }
+
+  function togglePause() {
+    if (scanPauseRef.current) {
+      scanPauseRef.current = false
+      setScanPaused(false)
+    } else {
+      scanPauseRef.current = true
+      setScanPaused(true)
+      setNextScanIn(null)
+    }
   }
 
   async function triageSingle(caseNumber: string) {
@@ -237,8 +313,6 @@ export default function AuditDashboard() {
       setFullAnalysis(prev => ({ ...prev, [caseNumber]: { status: 'error', message: e.message } }))
     }
   }
-
-  // No special copy logic needed — each diff card has its own copy button for plain text
 
   async function markReviewed(caseNumber: string) {
     try {
@@ -296,6 +370,7 @@ export default function AuditDashboard() {
   }
 
   const rangeCount = Math.max(0, (parseInt(scanTo) || 0) - (parseInt(scanFrom) || 0) + 1)
+  const estimatedMinutes = Math.ceil(rangeCount / 6)
 
   return (
     <div className={styles.root}>
@@ -361,16 +436,48 @@ export default function AuditDashboard() {
                 min={1} max={355}
                 disabled={scanning}
               />
-              <button
-                className={styles.scanBtn}
-                onClick={runScan}
-                disabled={scanning || syncing || results.length === 0}
-              >
-                {scanning
-                  ? <><span className={styles.btnSpinner} /> {scanProgress.current}/{scanProgress.total}</>
-                  : `⚡ Scan (${rangeCount})`}
-              </button>
+              {!scanning ? (
+                <button
+                  className={styles.scanBtn}
+                  onClick={runScan}
+                  disabled={syncing || results.length === 0}
+                  title={`~${estimatedMinutes} min at 6/min`}
+                >
+                  ⚡ Scan ({rangeCount})
+                </button>
+              ) : (
+                <>
+                  <button
+                    className={styles.scanBtn}
+                    onClick={togglePause}
+                    style={{ background: scanPaused ? '#16a34a' : '#d97706' }}
+                  >
+                    {scanPaused ? '▶ Resume' : '⏸ Pause'}
+                  </button>
+                  <button
+                    className={styles.scanBtn}
+                    onClick={stopScan}
+                    style={{ background: '#dc2626' }}
+                  >
+                    ■ Stop
+                  </button>
+                </>
+              )}
             </div>
+
+            {/* Rate & ETA info */}
+            {scanning && (
+              <div style={{ fontSize: 11, color: '#6b7a99', lineHeight: 1.4 }}>
+                Rate: 6 cases/min
+                {scanProgress.total > 0 && (
+                  <> · ~{Math.ceil((scanProgress.total - scanProgress.current) / 6)} min remaining</>
+                )}
+                {nextScanIn !== null && nextScanIn > 0 && (
+                  <> · Next in {nextScanIn}s</>
+                )}
+                {scanPaused && <> · <strong style={{ color: '#d97706' }}>PAUSED</strong></>}
+              </div>
+            )}
           </div>
 
           {/* Progress bar */}
