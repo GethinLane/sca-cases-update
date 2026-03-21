@@ -82,6 +82,7 @@
 .statAmber { color: #fbbf24; }
 .statRed { color: #f87171; }
 .statMuted { color: rgba(255,255,255,0.5); }
+.statBlue { color: #93c5fd; }
 
 /* ── Sidebar controls ── */
 .sidebarControls {
@@ -187,7 +188,7 @@
 }
 
 .sidebarItem {
-  padding: 10px 16px;
+  padding: 8px 16px;
   cursor: pointer;
   border-left: 3px solid transparent;
   transition: all 0.15s;
@@ -196,19 +197,18 @@
 .sidebarItem:hover { background: #f0f5fb; border-left-color: var(--accent-light); }
 .sidebarItemActive { background: #e8f0fa; border-left-color: var(--accent); }
 
-.sidebarItemTop {
+.sidebarItemRow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  margin-bottom: 4px;
 }
 
 .sidebarCaseNum {
   font-family: 'Playfair Display', serif;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-dark);
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .sidebarItemActive .sidebarCaseNum { color: var(--accent); }
@@ -221,14 +221,49 @@
   white-space: nowrap;
 }
 
-.sidebarSnippet {
+.reviewedTimestamp {
+  font-size: 10px;
+  font-weight: 600;
+  color: #15803d;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+/* ── Mark reviewed button ── */
+.reviewBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #16a34a;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: 'Nunito Sans', sans-serif;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.reviewBtn:hover { background: #15803d; }
+.reviewBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.reviewBtnDone {
+  composes: reviewBtn;
+  background: #bbf7d0;
+  color: #15803d;
+  cursor: default;
+}
+.reviewBtnDone:hover { background: #bbf7d0; }
+
+.reviewedBadge {
   font-size: 11px;
-  color: var(--text-muted);
-  line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  font-weight: 700;
+  color: #15803d;
+  background: #dcfce7;
+  border: 1px solid #bbf7d0;
+  border-radius: 20px;
+  padding: 3px 10px;
 }
 
 /* ── Status badge colours (shared) ── */
