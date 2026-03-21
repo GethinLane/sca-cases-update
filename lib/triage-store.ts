@@ -19,6 +19,8 @@ export interface TriageResult {
   managementSnippet?: string
   // Full case fields stored so full-analysis can use them without re-fetching
   fullCaseFields?: Record<string, string>
+  // Manual review timestamp — set when a human marks the case as reviewed
+  reviewedAt?: string
 }
 
 export interface TriageMetadata {
