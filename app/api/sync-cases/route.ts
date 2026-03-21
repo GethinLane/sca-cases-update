@@ -70,6 +70,7 @@ export async function POST(req: NextRequest) {
           // Preserve existing triage status, just update the case text
           existing.assessmentSnippet = assessmentText
           existing.managementSnippet = managementText
+          existing.fullCaseFields = data.fields
           await saveTriageResult(existing)
         } else {
           // New entry
@@ -84,6 +85,7 @@ export async function POST(req: NextRequest) {
             timestamp: new Date().toISOString(),
             assessmentSnippet: assessmentText,
             managementSnippet: managementText,
+            fullCaseFields: data.fields,
           })
         }
         synced++
