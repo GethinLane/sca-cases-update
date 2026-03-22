@@ -19,11 +19,12 @@ async function callAnthropic(
   systemPrompt: string,
   userPrompt: string,
   maxSearches: number = 3,
+  modelOverride?: string,
 ): Promise<AnthropicTriageResult> {
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
   if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not set')
 
-  const model = process.env.TRIAGE_ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001'
+  const model = modelOverride ?? process.env.TRIAGE_ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001'
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -48,7 +49,7 @@ async function callAnthropic(
           type: 'web_search_20250305',
           name: 'web_search',
           max_uses: maxSearches,
-          allowed_domains: getAllGuidelineDomainStrings(), // ← restored
+          allowed_domains: getAllGuidelineDomainStrings(),
           user_location: {
             type: 'approximate',
             country: 'GB',
@@ -165,15 +166,17 @@ export async function callTriageAI(
   systemPrompt: string,
   userPrompt: string,
   maxSearches: number = 3,
+  modelOverride?: string,
 ): Promise<TriageAIResult> {
   const provider = getTriageProvider()
 
   if (provider === 'anthropic') {
-    const result = await callAnthropic(systemPrompt, userPrompt, maxSearches)
+    const model = modelOverride ?? process.env.TRIAGE_ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001'
+    const result = await callAnthropic(systemPrompt, userPrompt, maxSearches, modelOverride)
     return {
       ...result,
       provider: 'anthropic',
-      model: process.env.TRIAGE_ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001',
+      model,
     }
   } else {
     const result = await callOpenAI(systemPrompt, userPrompt)
