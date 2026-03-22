@@ -28,6 +28,23 @@
 /* ── Header ── */
 .header { background: var(--navy); border-bottom: 3px solid var(--accent-light); flex-shrink: 0; }
 .headerInner { padding: 14px 28px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.headerLeft { display: flex; align-items: center; gap: 12px; }
+.menuToggle {
+  display: none;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.25);
+  color: white;
+  font-size: 18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.menuToggle:hover { background: rgba(255,255,255,0.25); }
 .logo { display: flex; align-items: center; gap: 12px; }
 .logoMark { width: 34px; height: 34px; background: rgba(255,255,255,0.2); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; color: white; flex-shrink: 0; }
 .logoText { font-family: 'Playfair Display', serif; font-size: 20px; color: white; font-weight: 700; }
@@ -805,4 +822,165 @@
   line-height: 1.5;
   margin: 0;
   font-style: italic;
+}
+
+/* ══════════════════════════════════════════════════
+   MOBILE OVERLAY & SIDEBAR TOGGLE
+   ══════════════════════════════════════════════════ */
+
+.sidebarOverlay {
+  display: none;
+}
+
+.sidebarOpen {
+  /* Applied via JS — used in media query below */
+}
+
+/* ── Mobile breakpoint (768px and below) ── */
+@media (max-width: 768px) {
+  .menuToggle {
+    display: flex;
+  }
+
+  .headerInner {
+    padding: 10px 16px;
+  }
+
+  .logoText {
+    font-size: 16px;
+  }
+
+  .logoSub {
+    display: none;
+  }
+
+  .headerNav {
+    gap: 2px;
+  }
+
+  .navLink {
+    font-size: 11px;
+    padding: 5px 10px;
+  }
+
+  .appShell {
+    position: relative;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 300px;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: none;
+  }
+
+  .sidebarOpen {
+    transform: translateX(0);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.15);
+  }
+
+  .sidebarOverlay {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 99;
+  }
+
+  .content {
+    padding: 16px;
+    width: 100%;
+  }
+
+  .caseHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .caseActions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .caseActions button {
+    flex: 1;
+    min-width: 0;
+    justify-content: center;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  .reviewBtn,
+  .reviewBtnDone {
+    font-size: 12px;
+    padding: 8px 12px;
+  }
+
+  .caseTitle {
+    font-size: 20px;
+  }
+
+  .diffRow {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .diffArrow {
+    padding-top: 0;
+    text-align: left;
+    font-size: 14px;
+    transform: rotate(90deg);
+    width: 28px;
+    margin: 0 auto;
+  }
+
+  .fullAnalysisSection {
+    margin-top: 24px;
+    padding-top: 20px;
+  }
+
+  .fullAnalysisTitle {
+    font-size: 18px;
+  }
+
+  .metaBar {
+    flex-direction: column;
+    gap: 6px;
+  }
+}
+
+/* ── Small mobile (480px and below) ── */
+@media (max-width: 480px) {
+  .sidebar {
+    width: 85vw;
+  }
+
+  .caseActions {
+    flex-direction: column;
+  }
+
+  .caseActions button {
+    width: 100%;
+  }
+
+  .headerInner {
+    padding: 8px 12px;
+  }
+
+  .content {
+    padding: 12px;
+  }
+
+  .logoMark {
+    display: none;
+  }
 }
