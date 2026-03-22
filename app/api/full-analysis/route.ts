@@ -143,6 +143,9 @@ Sources checked: ${triageResult.citedUrls.join(', ')}
 Use this as a starting point but review ALL fields comprehensively — the triage only checked Assessment and Management.`
       : 'No previous triage data available — perform a full review of all fields.'
 
+    // Cap extra context to avoid blowing token limits when users paste large documents
+    const trimmedContext = extraContext ? extraContext.slice(0, 8000) : ''
+
     const userPrompt = `CASE ${caseNumber}
 
 Fields present in this case: ${fieldNames}
@@ -156,9 +159,9 @@ COMPLETE CASE CONTENT (every field):
 ${allFieldsText}
 
 ---
-${extraContext ? `
+${trimmedContext ? `
 ADDITIONAL CONTEXT FROM REVIEWER:
-${extraContext}
+${trimmedContext}
 
 ---
 ` : ''}
@@ -214,6 +217,10 @@ Return specific before/after changes for any text that needs correcting, across 
       model: aiResult.model,
     })
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    console.error('Full analysis error:', err)
+    return NextResponse.json({
+      error: err.message ?? 'Unknown error',
+      detail: err.cause?.message ?? err.stack?.slice(0, 500) ?? '',
+    }, { status: 500 })
   }
 }
