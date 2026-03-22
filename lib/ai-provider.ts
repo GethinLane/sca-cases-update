@@ -26,6 +26,10 @@ async function callAnthropic(
 
   const model = modelOverride ?? process.env.TRIAGE_ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001'
 
+  // More output tokens for full analysis (Sonnet) vs triage (Haiku)
+  const isFullAnalysis = model.includes('sonnet')
+  const maxTokens = isFullAnalysis ? 12000 : 5000
+
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -35,7 +39,7 @@ async function callAnthropic(
     },
     body: JSON.stringify({
       model,
-      max_tokens: 5000,
+      max_tokens: maxTokens,
       system: [
         {
           type: 'text',
