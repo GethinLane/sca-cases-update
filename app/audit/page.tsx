@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
+import { renderMarkdown } from '@/lib/render-markdown'
 import styles from './page.module.css'
 
 interface TriageResult {
@@ -103,6 +104,9 @@ export default function AuditDashboard() {
   const [fullAnalysis, setFullAnalysis] = useState<Record<string, FullAnalysisState>>({})
   const [fullAnalysisContext, setFullAnalysisContext] = useState<Record<string, string>>({})
   const [copiedField, setCopiedField] = useState<string | null>(null)
+
+  // Toggle between rendered markdown and raw text view per diff card
+  const [rawView, setRawView] = useState<Record<string, boolean>>({})
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -239,8 +243,6 @@ export default function AuditDashboard() {
     }
   }
 
-  // No special copy logic needed — each diff card has its own copy button for plain text
-
   async function markReviewed(caseNumber: string) {
     try {
       const res = await fetch('/api/mark-reviewed', {
@@ -270,17 +272,12 @@ export default function AuditDashboard() {
   // Sort: unreviewed cases first (by severity), then reviewed cases by oldest review first
   const statusOrder: Record<string, number> = { 'outdated': 0, 'review-needed': 1, 'pending': 2, 'error': 3, 'up-to-date': 4 }
   const sorted = [...filtered].sort((a, b) => {
-    // Unreviewed always before reviewed
     const aReviewed = a.reviewedAt ? 1 : 0
     const bReviewed = b.reviewedAt ? 1 : 0
     if (aReviewed !== bReviewed) return aReviewed - bReviewed
-
-    // Within reviewed: oldest review first (needs re-review soonest)
     if (a.reviewedAt && b.reviewedAt) {
       return new Date(a.reviewedAt).getTime() - new Date(b.reviewedAt).getTime()
     }
-
-    // Within unreviewed: by status severity
     return (statusOrder[a.status] ?? 5) - (statusOrder[b.status] ?? 5)
   })
 
@@ -334,7 +331,6 @@ export default function AuditDashboard() {
 
         {/* ── Sidebar ── */}
         <aside className={`${styles.sidebar} ${sidebarOpen ? styles.sidebarOpen : ''}`}>
-          {/* Stats header */}
           <div className={styles.sidebarHeader}>
             <div className={styles.sidebarTitle}>Case audit</div>
             {stats && (
@@ -348,7 +344,6 @@ export default function AuditDashboard() {
             )}
           </div>
 
-          {/* Controls */}
           <div className={styles.sidebarControls}>
             <button
               className={`${styles.scanBtn} ${styles.scanBtnSecondary}`}
@@ -388,7 +383,6 @@ export default function AuditDashboard() {
             </div>
           </div>
 
-          {/* Progress bar */}
           {(scanning || syncing) && scanProgress.total > 0 && (
             <div className={styles.sidebarProgress}>
               <div className={styles.progressWrap}>
@@ -403,7 +397,6 @@ export default function AuditDashboard() {
             </div>
           )}
 
-          {/* Filter bar */}
           <div className={styles.filterBar}>
             {(['all', 'outdated', 'review-needed', 'up-to-date', 'reviewed', 'pending', 'error'] as FilterStatus[]).map(f => {
               const count = f === 'all'
@@ -428,7 +421,6 @@ export default function AuditDashboard() {
             })}
           </div>
 
-          {/* Case list */}
           <div className={styles.sidebarList}>
             {loading && (
               <div style={{ padding: '24px 20px', textAlign: 'center' }}>
@@ -661,7 +653,7 @@ export default function AuditDashboard() {
                       </div>
                     )}
 
-                    {/* Field changes — diff cards */}
+                    {/* Field changes — diff cards with RENDERED MARKDOWN */}
                     <div className={styles.section}>
                       <span className={styles.sectionTitle}>
                         {selectedFullAnalysis.data.fieldChanges?.length > 0
@@ -677,6 +669,8 @@ export default function AuditDashboard() {
                               low:    { color: '#b91c1c', bg: '#fee2e2' },
                             }
                             const cc = confColors[fc.confidence] ?? confColors.medium
+                            const cardKey = `${selectedResult.caseNumber}-${i}`
+                            const isRaw = rawView[cardKey] ?? false
                             return (
                               <div key={i} className={styles.fieldCard}>
                                 <div className={styles.fieldCardHeader}>
@@ -700,38 +694,74 @@ export default function AuditDashboard() {
                                   </a>
                                 )}
                                 <div className={styles.diffRow}>
+                                  {/* CURRENT text */}
                                   <div className={`${styles.diffBox} ${styles.diffBefore}`}>
                                     <div className={styles.diffLabelRow}>
                                       <span className={styles.diffLabel}>Current</span>
-                                      <button
-                                        className={styles.diffCopyBtn}
-                                        onClick={() => {
-                                          navigator.clipboard.writeText(fc.currentText)
-                                          setCopiedField(`current-${i}`)
-                                          setTimeout(() => setCopiedField(null), 1500)
-                                        }}
-                                      >
-                                        {copiedField === `current-${i}` ? '✓' : 'Copy'}
-                                      </button>
+                                      <div style={{ display: 'flex', gap: 4 }}>
+                                        <button
+                                          className={styles.diffCopyBtn}
+                                          onClick={() => {
+                                            setRawView(rv => ({ ...rv, [cardKey]: !rv[cardKey] }))
+                                          }}
+                                        >
+                                          {isRaw ? 'Rendered' : 'Raw'}
+                                        </button>
+                                        <button
+                                          className={styles.diffCopyBtn}
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(fc.currentText)
+                                            setCopiedField(`current-${i}`)
+                                            setTimeout(() => setCopiedField(null), 1500)
+                                          }}
+                                        >
+                                          {copiedField === `current-${i}` ? '✓' : 'Copy'}
+                                        </button>
+                                      </div>
                                     </div>
-                                    <p className={styles.diffText}>{fc.currentText}</p>
+                                    {isRaw ? (
+                                      <pre className={styles.diffTextRaw}>{fc.currentText}</pre>
+                                    ) : (
+                                      <div
+                                        className={styles.diffRendered}
+                                        dangerouslySetInnerHTML={{ __html: renderMarkdown(fc.currentText) }}
+                                      />
+                                    )}
                                   </div>
                                   <div className={styles.diffArrow}>→</div>
+                                  {/* SUGGESTED text */}
                                   <div className={`${styles.diffBox} ${styles.diffAfter}`}>
                                     <div className={styles.diffLabelRow}>
                                       <span className={styles.diffLabel}>Suggested</span>
-                                      <button
-                                        className={styles.diffCopyBtn}
-                                        onClick={() => {
-                                          navigator.clipboard.writeText(fc.suggestedText)
-                                          setCopiedField(`suggested-${i}`)
-                                          setTimeout(() => setCopiedField(null), 1500)
-                                        }}
-                                      >
-                                        {copiedField === `suggested-${i}` ? '✓' : 'Copy'}
-                                      </button>
+                                      <div style={{ display: 'flex', gap: 4 }}>
+                                        <button
+                                          className={styles.diffCopyBtn}
+                                          onClick={() => {
+                                            setRawView(rv => ({ ...rv, [cardKey]: !rv[cardKey] }))
+                                          }}
+                                        >
+                                          {isRaw ? 'Rendered' : 'Raw'}
+                                        </button>
+                                        <button
+                                          className={styles.diffCopyBtn}
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(fc.suggestedText)
+                                            setCopiedField(`suggested-${i}`)
+                                            setTimeout(() => setCopiedField(null), 1500)
+                                          }}
+                                        >
+                                          {copiedField === `suggested-${i}` ? '✓' : 'Copy'}
+                                        </button>
+                                      </div>
                                     </div>
-                                    <p className={styles.diffText}>{fc.suggestedText}</p>
+                                    {isRaw ? (
+                                      <pre className={styles.diffTextRaw}>{fc.suggestedText}</pre>
+                                    ) : (
+                                      <div
+                                        className={styles.diffRendered}
+                                        dangerouslySetInnerHTML={{ __html: renderMarkdown(fc.suggestedText) }}
+                                      />
+                                    )}
                                   </div>
                                 </div>
                               </div>
