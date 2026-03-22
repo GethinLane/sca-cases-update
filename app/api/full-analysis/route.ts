@@ -37,63 +37,12 @@ YOUR JOB: Review EVERY field in the case for clinical accuracy against current U
 
 DO NOT rewrite entire fields. Only output the specific snippets within each field that need to change.
 
-═══════════════════════════════════════════════════════════════
-AIRTABLE RICH TEXT FORMATTING RULES — CRITICAL
-═══════════════════════════════════════════════════════════════
-
-Both currentText and suggestedText MUST use Airtable-compatible rich text markdown so the reviewer can copy-paste directly into Airtable with no reformatting needed.
-
-Airtable's rich text fields support the following markdown:
-
-HEADINGS:
-  ## Heading 2          →  renders as H2 in Airtable
-  ### Heading 3         →  renders as H3 in Airtable
-  #### Heading 4        →  Airtable does NOT render H4 as a heading. It displays the literal text "#### Heading Name". Many of our cases use #### as a VISUAL CONVENTION for sub-headings. You MUST keep #### exactly as-is if the original text uses it. Never convert #### to ##, ###, **, or any other format.
-
-INLINE FORMATTING:
-  **bold text**         →  bold
-  *italic text*         →  italic
-  ~~strikethrough~~     →  strikethrough
-  \`inline code\`        →  inline code
-  [link text](url)      →  hyperlink
-
-LISTS:
-  - item                →  bullet point (use hyphen followed by a space)
-  1. item               →  numbered list
-
-BLOCKQUOTES:
-  > quoted text         →  blockquote
-
-CODE BLOCKS:
-  \`\`\`                   →  code block (triple backticks on own line)
-
-LINE BREAKS:
-  A blank line between paragraphs creates a paragraph break in Airtable.
-  A single newline within a block keeps text in the same visual block.
-
-═══════════════════════════════════════════════════════════════
-HOW TO APPLY THESE RULES
-═══════════════════════════════════════════════════════════════
-
-1. currentText: Copy the EXACT text from the case content, preserving ALL original markdown formatting — every **, *, ##, ###, ####, -, 1., >, blank line, etc. The reviewer will use find-and-replace, so this must be a character-perfect match.
-
-2. suggestedText: Write the corrected replacement using the SAME formatting conventions as the original. Specifically:
-   - If the original uses **bold** for drug names, your replacement must also use **bold** for drug names
-   - If the original uses - for bullet points, your replacement must also use - for bullet points
-   - If the original uses #### for sub-headings, your replacement must also use #### for sub-headings
-   - If the original uses ### for section headers, your replacement must also use ### for section headers
-   - If the original uses numbered lists (1. 2. 3.), your replacement must also use numbered lists
-   - If the original uses > for blockquotes, your replacement must also use > for blockquotes
-   - Match indentation, spacing, and line break patterns from the original
-   - The suggestedText must be a DROP-IN REPLACEMENT: same structure, same formatting, just corrected clinical content
-
-3. NEVER strip formatting from currentText or suggestedText. If the original has rich formatting, the replacement must too.
-
-4. NEVER convert one formatting style to another (e.g. don't convert #### to ### or ** to plain text).
-
-5. When ADDING new content (e.g. adding a missing bullet point to an existing list), match the formatting style of the surrounding content.
-
-═══════════════════════════════════════════════════════════════
+FORMATTING RULES FOR suggestedText:
+- The text will be pasted into Airtable which has rich text formatting enabled
+- Airtable interprets standard markdown: **bold**, *italic*, - bullet points, 1. numbered lists
+- EXCEPT for H4 headings: Airtable does NOT render #### as a heading. It displays the literal text "#### Heading Name" as a visual convention. You MUST keep #### exactly as-is in suggestedText if the original uses it.
+- Match the exact formatting conventions of the original text in that field.
+- suggestedText must be a DROP-IN REPLACEMENT for currentText — same formatting, same structure, just corrected content.
 
 CLINICAL RULES:
 - Only suggest changes supported by current UK guidelines
@@ -128,9 +77,9 @@ Respond ONLY with a valid JSON object (no markdown fences, no preamble):
   "fieldChanges": [
     {
       "fieldName": "The exact Airtable field name where this text appears, e.g. Assessment, Management, Marking Criteria, Explanation, History, etc.",
-      "currentText": "The EXACT current text snippet that needs changing — copy it VERBATIM from the case content, preserving ALL markdown formatting (####, ###, ##, **, *, -, 1., >, blank lines, etc). Include enough surrounding context (a full paragraph or section) so the reviewer can locate it and use find-and-replace.",
+      "currentText": "The EXACT current text snippet that needs changing — copy it verbatim from the case content, including any markdown formatting (####, **, - etc). Include enough surrounding context (a full paragraph or section) so the reviewer can locate it.",
       "issue": "What is wrong with this text and why it needs changing — reference the specific guideline and how it applies to this case",
-      "suggestedText": "The replacement text, formatted IDENTICALLY to the original using Airtable-compatible markdown (see formatting rules above). Must be a direct drop-in replacement with the same heading styles, bold patterns, list formats, and spacing — just with corrected clinical content.",
+      "suggestedText": "The replacement text, formatted identically to the original but with the clinical content corrected. Must be a direct drop-in replacement.",
       "confidence": "high" | "medium" | "low",
       "source": "URL of the guideline that supports this change"
     }
@@ -147,8 +96,7 @@ Respond ONLY with a valid JSON object (no markdown fences, no preamble):
 IMPORTANT:
 - fieldName must be the EXACT Airtable field name as shown in the case content (e.g. "Assessment", "Management", "Marking Criteria", "Explanation").
 - Each fieldChange should cover ONE specific issue. If multiple issues exist in one paragraph, include the whole paragraph and fix them all.
-- currentText must be an EXACT match to what appears in the case — the reviewer will use find-and-replace. Preserve every character of formatting.
-- suggestedText must use the SAME Airtable-compatible markdown formatting as the original text. It should be ready to paste directly into Airtable with no manual reformatting needed.
+- currentText must be an EXACT match to what appears in the case — the reviewer will use find-and-replace.
 - If nothing needs changing in any field, return "verdict": "up-to-date" with an empty fieldChanges array.`
 
 export async function POST(req: NextRequest) {
@@ -221,8 +169,6 @@ Review EVERY field in this case for clinical accuracy against current UK guideli
 1. NICE CKS for the main condition
 2. The relevant specialist society guidelines (e.g. BAD/PCDS for dermatology, BTS for respiratory, etc.)
 3. BNF if any prescribing or dosing is mentioned
-
-IMPORTANT: Both currentText and suggestedText in your response MUST preserve the full Airtable-compatible rich text markdown formatting (##, ###, ####, **bold**, *italic*, - bullet points, 1. numbered lists, > blockquotes, blank lines for paragraph breaks). The suggestedText must be ready to paste directly into an Airtable rich text field with zero reformatting.
 
 Return specific before/after changes for any text that needs correcting, across ANY field. Do NOT rewrite entire fields — just the specific snippets that need updating.`
 
