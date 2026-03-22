@@ -170,8 +170,10 @@ Review EVERY field in this case for clinical accuracy against current UK guideli
 Return specific before/after changes for any text that needs correcting, across ANY field. Do NOT rewrite entire fields — just the specific snippets that need updating.`
 
     // More searches needed — NICE CKS + specialist society + BNF minimum
+    // Use Sonnet for full analysis (more capable than Haiku for complex multi-field review)
     const maxSearches = parseInt(process.env.FULL_ANALYSIS_MAX_SEARCHES ?? process.env.TRIAGE_MAX_SEARCHES ?? '12')
-    const aiResult = await callTriageAI(FULL_ANALYSIS_SYSTEM_PROMPT, userPrompt, maxSearches)
+    const fullAnalysisModel = process.env.FULL_ANALYSIS_MODEL ?? 'claude-sonnet-4-6'
+    const aiResult = await callTriageAI(FULL_ANALYSIS_SYSTEM_PROMPT, userPrompt, maxSearches, fullAnalysisModel)
 
     // Parse the JSON response
     let parsed: any
