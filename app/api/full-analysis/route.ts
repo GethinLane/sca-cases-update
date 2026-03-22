@@ -178,29 +178,60 @@ Return specific before/after changes for any text that needs correcting, across 
     const fullAnalysisModel = process.env.FULL_ANALYSIS_MODEL ?? 'claude-sonnet-4-6'
     const aiResult = await callTriageAI(FULL_ANALYSIS_SYSTEM_PROMPT, userPrompt, maxSearches, fullAnalysisModel)
 
-    // Parse the JSON response
+    // Parse the JSON response — Sonnet 4.6 may include preamble text before/after the JSON
     let parsed: any
     try {
       let clean = aiResult.textOutput
         .replace(/```json\s*/g, '')
         .replace(/```\s*/g, '')
+        .replace(/<cite[^>]*?\/>/g, '')
         .replace(/<cite[^>]*>/g, '')
         .replace(/<\/cite>/g, '')
         .trim()
 
+      // Attempt 1: direct parse (clean response)
       try {
         parsed = JSON.parse(clean)
       } catch {
-        const jsonMatch = clean.match(/\{[\s\S]*"fieldChanges"\s*:[\s\S]*\}/)
-        if (jsonMatch) {
-          parsed = JSON.parse(jsonMatch[0])
+        // Attempt 2: find JSON object that contains our expected fields
+        // Use a balanced brace approach instead of greedy regex
+        const jsonStart = clean.indexOf('{')
+        if (jsonStart !== -1) {
+          let depth = 0
+          let jsonEnd = -1
+          for (let i = jsonStart; i < clean.length; i++) {
+            if (clean[i] === '{') depth++
+            if (clean[i] === '}') depth--
+            if (depth === 0) { jsonEnd = i; break }
+          }
+          if (jsonEnd !== -1) {
+            const jsonStr = clean.slice(jsonStart, jsonEnd + 1)
+            try {
+              parsed = JSON.parse(jsonStr)
+            } catch {
+              // Attempt 3: try to fix common issues — trailing commas, unescaped newlines in strings
+              const fixed = jsonStr
+                .replace(/,\s*([}\]])/g, '$1')  // trailing commas
+                .replace(/\n/g, '\\n')            // unescaped newlines (crude but catches most)
+              try {
+                parsed = JSON.parse(fixed)
+              } catch {
+                throw new Error('JSON parse failed after all attempts')
+              }
+            }
+          } else {
+            throw new Error('No matching closing brace found')
+          }
         } else {
-          throw new Error('No JSON found')
+          throw new Error('No JSON object found in response')
         }
       }
-    } catch {
+    } catch (parseErr: any) {
+      console.error('JSON parse error:', parseErr.message)
+      console.error('Raw text (first 2000 chars):', aiResult.textOutput.slice(0, 2000))
       return NextResponse.json({
         error: 'AI returned unparseable response',
+        parseError: parseErr.message,
         raw: aiResult.textOutput.slice(0, 3000),
       }, { status: 500 })
     }
