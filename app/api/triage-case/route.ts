@@ -77,6 +77,7 @@ export async function POST(req: NextRequest) {
       let clean = aiResult.textOutput
         .replace(/```json\s*/g, '')
         .replace(/```\s*/g, '')
+        .replace(/<cite[^>]*?\/>/g, '')
         .replace(/<cite[^>]*>/g, '')
         .replace(/<\/cite>/g, '')
         .trim()
@@ -84,9 +85,27 @@ export async function POST(req: NextRequest) {
       try {
         parsed = JSON.parse(clean)
       } catch {
-        const jsonMatch = clean.match(/\{[\s\S]*"status"\s*:[\s\S]*"summary"\s*:[\s\S]*\}/)
-        if (jsonMatch) {
-          parsed = JSON.parse(jsonMatch[0])
+        // Find the first { and match its closing } using balanced braces
+        const jsonStart = clean.indexOf('{')
+        if (jsonStart !== -1) {
+          let depth = 0
+          let jsonEnd = -1
+          for (let i = jsonStart; i < clean.length; i++) {
+            if (clean[i] === '{') depth++
+            if (clean[i] === '}') depth--
+            if (depth === 0) { jsonEnd = i; break }
+          }
+          if (jsonEnd !== -1) {
+            const jsonStr = clean.slice(jsonStart, jsonEnd + 1)
+            try {
+              parsed = JSON.parse(jsonStr)
+            } catch {
+              const fixed = jsonStr.replace(/,\s*([}\]])/g, '$1')
+              parsed = JSON.parse(fixed)
+            }
+          } else {
+            throw new Error('No matching closing brace')
+          }
         } else {
           throw new Error('No JSON found')
         }
