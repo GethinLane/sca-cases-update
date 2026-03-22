@@ -77,7 +77,8 @@ async function callAnthropic(
 
   for (const block of data.content ?? []) {
     if (block.type === 'text') {
-      textOutput = block.text
+      // Concatenate all text blocks — web search interleaves multiple text blocks
+      textOutput += (textOutput ? '\n' : '') + block.text
       for (const citation of block.citations ?? []) {
         if (citation.url && !citedUrls.includes(citation.url)) {
           citedUrls.push(citation.url)
@@ -95,11 +96,15 @@ async function callAnthropic(
 
   searchCount = data.usage?.server_tool_use?.web_search_requests ?? 0
 
+  // Clean the text output — strip markdown fences, citation tags, and any preamble/postamble
   textOutput = textOutput
     .replace(/```json\s*/g, '')
     .replace(/```\s*/g, '')
+    .replace(/<cite[^>]*?\/>/g, '')
     .replace(/<cite[^>]*>/g, '')
     .replace(/<\/cite>/g, '')
+    .replace(/<source>[^<]*<\/source>/g, '')
+    .replace(/<search_result>[\s\S]*?<\/search_result>/g, '')
     .trim()
 
   return { textOutput, searchCount, citedUrls }
