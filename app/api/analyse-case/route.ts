@@ -209,17 +209,28 @@ Please take this additional context into account in your analysis.` : ''}`
       }
     }
 
-    // ── Determine NICE CKS verification status from actual cited URLs ──
-    const niceCksUrls = citedUrls.filter(u => u.includes('cks.nice.org.uk'))
-    const niceUrls = citedUrls.filter(u => u.includes('nice.org.uk'))
-    const niceCksVerified = niceCksUrls.length > 0
-    const niceVerified = niceUrls.length > 0
-
     // Strip any accidental markdown fences
     const clean = textOutput.replace(/```json|```/g, '').trim()
 
     try {
       let parsed = JSON.parse(clean)
+
+      // ── Merge URLs from GPT's JSON sources into the annotation-level citedUrls ──
+      // OpenAI annotations and GPT's own sources array are two separate data paths;
+      // annotations can be empty even when GPT clearly accessed the URLs.
+      if (Array.isArray(parsed.sources)) {
+        for (const src of parsed.sources) {
+          if (src?.url && !citedUrls.includes(src.url)) {
+            citedUrls.push(src.url)
+          }
+        }
+      }
+
+      // ── Now compute NICE verification status from the merged URL list ──
+      const niceCksUrls = citedUrls.filter(u => u.includes('cks.nice.org.uk'))
+      const niceUrls = citedUrls.filter(u => u.includes('nice.org.uk'))
+      const niceCksVerified = niceCksUrls.length > 0
+      const niceVerified = niceUrls.length > 0
 
       // ── Post-processing: catch verdict/fieldChanges contradictions ──
       // If GPT returned fieldChanges but set verdict to "invalid", override to "partial"
