@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import styles from './page.module.css'
 
 interface FeedbackItem {
@@ -82,6 +83,7 @@ export default function Dashboard() {
   const [copied, setCopied] = useState<Record<string, boolean>>({})
   const [extraContext, setExtraContext] = useState<Record<string, string>>({})
   const [showQueries, setShowQueries] = useState<Record<string, boolean>>({})
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   useEffect(() => {
     fetch('/api/fetch-feedback')
@@ -144,31 +146,37 @@ export default function Dashboard() {
       {/* ── Header ── */}
       <header className={styles.header}>
         <div className={styles.headerInner}>
-          <div className={styles.logo}>
-            <div className={styles.logoMark}>⚕</div>
-            <div>
-              <div className={styles.logoText}>SCA Revision Bot</div>
-              <div className={styles.logoSub}>Case Correction Review Tool</div>
+          <div className={styles.headerLeft}>
+            <button
+              className={styles.menuToggle}
+              onClick={() => setSidebarOpen(o => !o)}
+              aria-label="Toggle sidebar"
+            >
+              {sidebarOpen ? '✕' : '☰'}
+            </button>
+            <div className={styles.logo}>
+              <div className={styles.logoMark}>⚕</div>
+              <div>
+                <div className={styles.logoText}>SCA Revision Bot</div>
+                <div className={styles.logoSub}>Case Correction Review Tool</div>
+              </div>
             </div>
           </div>
-          <nav style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-  <a href="/" style={{
-    fontSize: '13px', color: 'white', fontWeight: 600,
-    textDecoration: 'none', padding: '6px 14px', borderRadius: '6px',
-    background: 'rgba(255,255,255,0.2)',
-  }}>Feedback Review</a>
-  <a href="/audit" style={{
-    fontSize: '13px', color: 'rgba(255,255,255,0.7)', fontWeight: 600,
-    textDecoration: 'none', padding: '6px 14px', borderRadius: '6px',
-  }}>Guideline Audit</a>
-</nav>
+          <nav className={styles.headerNav}>
+            <Link href="/" className={`${styles.navLink} ${styles.navLinkActive}`}>Feedback Review</Link>
+            <Link href="/audit" className={styles.navLink}>Guideline Audit</Link>
+          </nav>
         </div>
       </header>
 
       <div className={styles.appShell}>
+        {/* Mobile overlay */}
+        {sidebarOpen && (
+          <div className={styles.sidebarOverlay} onClick={() => setSidebarOpen(false)} />
+        )}
 
         {/* ── Sidebar ── */}
-        <aside className={styles.sidebar}>
+        <aside className={`${styles.sidebar} ${sidebarOpen ? styles.sidebarOpen : ''}`}>
           <div className={styles.sidebarHeader}>
             <div className={styles.sidebarTitle}>Pending submissions</div>
             {loading ? (
@@ -201,7 +209,7 @@ export default function Dashboard() {
                 <div
                   key={item.feedback.id}
                   className={`${styles.sidebarItem} ${isActive ? styles.sidebarItemActive : ''}`}
-                  onClick={() => setSelectedId(item.feedback.id)}
+                  onClick={() => { setSelectedId(item.feedback.id); setSidebarOpen(false) }}
                 >
                   <div className={styles.sidebarCaseNum}>
                     Case {item.feedback.caseNumber || '?'}
@@ -277,7 +285,7 @@ export default function Dashboard() {
                     <><span className={styles.btnSpinner} /> Analysing…</>
                   ) : selectedState?.status === 'done'
                     ? '↺ Re-analyse'
-                    : '⚡ Analyse with GPT'}
+                    : '⚡ Analyse'}
                 </button>
               </div>
 
@@ -346,7 +354,7 @@ export default function Dashboard() {
                     <p className={styles.summaryText}>{selectedState.data.summary}</p>
                   </div>
 
-                  {/* ── Sources & Verification (new) ── */}
+                  {/* ── Sources & Verification ── */}
                   <div className={styles.section}>
                     <span className={styles.sectionTitle}>Sources & verification</span>
 
