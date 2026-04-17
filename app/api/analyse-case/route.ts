@@ -1,6 +1,8 @@
 // app/api/analyse-case/route.ts
 // Assesses user feedback against a case and verifies against UK guidelines.
-// Uses the shared callTriageAI abstraction with a strict JSON schema.
+// Uses callTriageAI with a strict JSON schema that forces a self-consistency check
+// before the verdict is written, so contradictions (invalid verdict + fieldChanges)
+// become structurally impossible rather than something we have to silently override.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { callTriageAI } from '@/lib/ai-provider'
@@ -11,55 +13,91 @@ export const maxDuration = 180
 const SYSTEM_PROMPT = `You are a medical education quality reviewer for MRCGP SCA (Simulated Consultation Assessment) exam cases.
 Your job is to assess user-submitted corrections or issues against the actual case content, verify them against current UK clinical guidelines using web search, and produce structured recommendations.
 
-CRITICAL — WHAT "VERDICT" MEANS:
+═══════════════════════════════════════════════════════════════════════
+OUTPUT ORDER — STRICTLY FOLLOW THIS SEQUENCE
+═══════════════════════════════════════════════════════════════════════
+Fill the JSON fields in this logical order. The verdict is DERIVED from the fields above it — do NOT decide the verdict first.
+
+  1. caseScenario      → describe the patient
+  2. summary           → explain what you found
+  3. sources           → list the URLs you checked
+  4. fieldChanges      → list every issue that needs fixing
+  5. verdictSelfCheck  → mechanical check: count fieldChanges, flag summary language, pick rule
+  6. verdict           → MUST follow from verdictSelfCheck.verdictRule
+  7. verdictReason     → explain in plain English
+  8. emailResponse     → draft reply (or "No contact requested")
+
+═══════════════════════════════════════════════════════════════════════
+WHAT "VERDICT" MEANS
+═══════════════════════════════════════════════════════════════════════
 The verdict is about whether THE USER'S FEEDBACK is correct — NOT whether the case itself is valid.
-- "valid" = the user has identified a genuine problem. Their feedback is correct and the case needs changing.
-- "partial" = the user has a point on some aspects but is wrong or overstating on others. Some changes are needed but not everything they suggest.
-- "invalid" = the user's feedback is factually incorrect. The case is already right and no changes are needed.
-- "uncertain" = you cannot determine from the evidence whether the user is right or wrong.
+- "valid"     = user identified a genuine problem. Case needs changing.
+- "partial"   = user has a point on some aspects but is wrong on others. Some changes needed.
+- "invalid"   = user's feedback is factually incorrect. Case is already right. NO changes needed.
+- "uncertain" = cannot determine whether the user is right or wrong.
 
-IMPORTANT: Your verdict MUST be consistent with your summary, sources, and fieldChanges.
-- If your summary says the user "was right", "raised a good point", or "is correct" → the verdict MUST be "valid" or "partial", NEVER "invalid".
-- If your fieldChanges array contains one or more changes → the verdict MUST be "valid" or "partial", NEVER "invalid".
-- "invalid" means you found ZERO problems with the case after checking. If you found even one issue the user raised, use "partial" at minimum.
+═══════════════════════════════════════════════════════════════════════
+THE VERDICT CONSISTENCY RULE (CANNOT BE BROKEN)
+═══════════════════════════════════════════════════════════════════════
+After writing fieldChanges and summary, compute verdictSelfCheck HONESTLY:
 
-CRITICAL — CASE-SPECIFIC REASONING:
-You are given the FULL case content. You MUST apply guidelines TO THIS PATIENT, not give generic "it depends" answers.
-- Identify the patient's presenting symptoms, severity, duration, red flags, comorbidities, age.
-- Apply the guideline TO THIS PATIENT and state clearly what the correct management would be for this specific scenario.
-- Your verdict, summary, suggested field changes and email must all reflect what is correct FOR THIS SPECIFIC PATIENT.
+  IF fieldChangesCount > 0 OR summaryAcknowledgesProblem = true:
+      → verdictRule MUST be "changes_needed_partial_or_valid"
+      → verdict MUST be "valid" or "partial" — NEVER "invalid"
 
-When verifying any clinical claim, search these sources as relevant:
-- NICE CKS (cks.nice.org.uk) — always search first; primary UK primary care reference
+  IF fieldChangesCount = 0 AND summaryAcknowledgesProblem = false:
+      → verdictRule is one of:
+         • "no_changes_feedback_was_wrong_so_invalid" → verdict = "invalid"
+         • "no_changes_cannot_determine_so_uncertain" → verdict = "uncertain"
+
+Phrases in summary that count as acknowledging a problem:
+"the user is correct", "good point", "valid point", "should be updated", "is reasonable",
+"has identified a legitimate issue", "needs changing", "is outdated".
+
+If you find yourself writing "invalid" while fieldChanges has entries, STOP. Re-read the rule. The two MUST agree.
+
+═══════════════════════════════════════════════════════════════════════
+CASE-SPECIFIC REASONING
+═══════════════════════════════════════════════════════════════════════
+Apply guidelines TO THIS PATIENT, not generically:
+- Identify symptom severity, duration, red flags, comorbidities, age.
+- State the correct management FOR THIS SPECIFIC SCENARIO.
+- Don't hedge with "it depends" — use case details to make a concrete judgement.
+
+═══════════════════════════════════════════════════════════════════════
+SEARCH SOURCES
+═══════════════════════════════════════════════════════════════════════
+- NICE CKS (cks.nice.org.uk) — always search first
 - NICE guidelines (nice.org.uk/guidance)
-- RCGP resources (rcgp.org.uk)
-- BNF (bnf.nice.org.uk) — prescribing/drug information
-- Relevant specialist society (BAD, BMS, RCOG, BTS, SIGN, BHF, BTA, etc.) — for topic-specific detail
+- RCGP (rcgp.org.uk)
+- BNF (bnf.nice.org.uk)
+- Relevant specialist society (BAD, BMS, RCOG, BTS, SIGN, BHF, BTA, BASHH, FSRH, RCPsych, BSG, entuk.org, BAUS, RCPCH etc.)
 
-Always include at least one explicit search targeting cks.nice.org.uk.
+Always include at least one search of cks.nice.org.uk.
 
-fieldChanges COMPLETENESS RULE:
-Every issue you identify MUST appear as a fieldChange entry. Do NOT mention a problem in the summary or verdictReason without a corresponding fieldChange. This includes:
-- Clinical content errors (wrong drug, dose, threshold, referral criteria)
+═══════════════════════════════════════════════════════════════════════
+fieldChanges COMPLETENESS
+═══════════════════════════════════════════════════════════════════════
+Every issue must appear as a fieldChange entry:
+- Clinical content errors (drug, dose, threshold, referral criteria)
 - Marking criteria / RTO contradictions
 - Role-player brief inconsistencies
 - Case logic problems
-Each distinct issue needs its own fieldChange entry.
 
-If no changes are needed at all, return an empty fieldChanges array — but then your verdict MUST be "invalid" or "uncertain".
+Each distinct issue gets its own entry. Don't lump multiple issues into one.
 
-EMAIL TONE GUIDE for the emailResponse field:
-- Write like a real person, not a corporate template. Friendly colleague tone.
-- Start with a genuine, warm thank-you. Not "Dear [Name]" or "I hope this email finds you well".
-- Use contractions. Short sentences are fine. Reference specific clinical details.
-- If they were right (fully or partially), genuinely credit them.
-- If they were wrong, be kind — "I can see why you'd think that, but when we checked..."
-- End warmly. 4-8 sentences, not an essay.
-- Avoid robotic phrases: "I want to assure you", "Please do not hesitate", "We value your contribution", "Rest assured", "Your input is invaluable".
-- Sign off as "The SCA Revision Team".
-- If contactRegardingOutcome is false, emailResponse should be exactly "No contact requested".
+═══════════════════════════════════════════════════════════════════════
+EMAIL TONE
+═══════════════════════════════════════════════════════════════════════
+- Warm, friendly colleague tone. No corporate-speak.
+- Start with a genuine thank-you. Not "Dear [Name]" or "I hope this finds you well".
+- Contractions. Reference specific clinical details.
+- If they were right, credit them. If wrong, be kind — "I can see why you'd think that, but when we checked..."
+- 4-8 sentences. Sign off as "The SCA Revision Team".
+- Avoid: "I want to assure you", "Please do not hesitate", "We value your contribution", "Rest assured", "Your input is invaluable".
+- If no contact was requested, emailResponse must be exactly: "No contact requested".
 
-Each source entry MUST correspond to a URL you actually accessed via web search.`
+Each source entry must correspond to a URL you accessed via web search.`
 
 export async function POST(req: NextRequest) {
   const { feedback, caseData, extraContext } = await req.json()
@@ -86,13 +124,14 @@ ${feedback.issueSummary}
 ---
 
 Steps:
-1. Read the case content and identify specific patient details (symptoms, severity, duration, history, findings, red flags).
-2. Check the user's feedback against the case — clinical issues, marking/RTO issues, role-player contradictions, logic problems.
+1. Read the case content and identify patient details (symptoms, severity, duration, history, findings, red flags).
+2. Check the user's feedback against the case — clinical, marking/RTO, role-player, logic.
 3. Search the web to verify clinical claims against current UK guidelines.
 4. Apply guidelines TO THIS SPECIFIC PATIENT.
-5. For EVERY issue, create a fieldChange entry. If you mention it in the summary, it must have a fieldChange.
-6. Set the verdict based on whether the USER'S FEEDBACK is correct.
-7. Draft a response email ${feedback.contactEmail ? `(email: ${feedback.contactEmail})` : '(no contact requested — set emailResponse to "No contact requested")'}.
+5. For EVERY issue, create a fieldChange entry.
+6. Fill verdictSelfCheck HONESTLY by counting your fieldChanges and reading your own summary.
+7. Let verdict follow from verdictSelfCheck.verdictRule — do not override it.
+8. Draft a response email ${feedback.contactEmail ? `(email: ${feedback.contactEmail})` : '(no contact requested — set emailResponse to "No contact requested")'}.
 ${extraContext ? `
 ---
 
@@ -113,8 +152,28 @@ ${extraContext}` : ''}`
     })
 
     const parsed = result.parsed
-    const citedUrls = result.citedUrls
 
+    // ── Final sanity check on the schema's own self-check ──
+    // Schema-level enforcement catches most contradictions, but we still surface
+    // the very rare mismatches loudly rather than silently rewriting (old behaviour).
+    const hasFieldChanges = Array.isArray(parsed.fieldChanges) && parsed.fieldChanges.length > 0
+    if (hasFieldChanges && parsed.verdict === 'invalid') {
+      return NextResponse.json({
+        error:
+          'Model returned a self-contradicting result: verdict is "invalid" but fieldChanges is non-empty. ' +
+          'This should have been caught by verdictSelfCheck. Please re-run the analysis. ' +
+          'If this keeps happening, increase OPENAI_ANALYSE_EFFORT to "high" or switch to a stronger model.',
+        _debug: {
+          verdict: parsed.verdict,
+          verdictSelfCheck: parsed.verdictSelfCheck,
+          fieldChangesCount: parsed.fieldChanges.length,
+          provider: result.provider,
+          model: result.model,
+        },
+      }, { status: 422 })
+    }
+
+    const citedUrls = result.citedUrls
     const niceCksUrls = citedUrls.filter(u => u.includes('cks.nice.org.uk'))
     const niceUrls = citedUrls.filter(u => u.includes('nice.org.uk'))
 
@@ -122,7 +181,7 @@ ${extraContext}` : ''}`
       ...parsed,
       _verification: {
         citedUrls,
-        searchQueries: [], // No longer extracted — not reliably available across providers
+        searchQueries: [],
         niceCksVerified: niceCksUrls.length > 0,
         niceVerified: niceUrls.length > 0,
         niceCksUrls,
