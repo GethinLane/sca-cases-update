@@ -1,25 +1,21 @@
 // app/api/triage-case/route.ts
-// Triage a single case against current UK guidelines.
-// Uses the dual-provider abstraction (Anthropic or OpenAI based on env var).
+// Triage a single case against current UK guidelines using structured outputs.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getCaseData } from '@/lib/airtable'
 import { callTriageAI } from '@/lib/ai-provider'
 import { saveTriageResult, saveTriageMetadata, getTriageMetadata } from '@/lib/triage-store'
 import { TRIAGE_SYSTEM_PROMPT, buildTriageUserPrompt } from '@/lib/triage-prompt'
+import { TRIAGE_SCHEMA } from '@/lib/schemas'
 import type { TriageResult } from '@/lib/triage-store'
 
-export const maxDuration = 120 // Allow up to 2 mins for web search
+export const maxDuration = 120
 
 export async function POST(req: NextRequest) {
   try {
     const { caseNumber, batchMode } = await req.json()
+    if (!caseNumber) return NextResponse.json({ error: 'Missing caseNumber' }, { status: 400 })
 
-    if (!caseNumber) {
-      return NextResponse.json({ error: 'Missing caseNumber' }, { status: 400 })
-    }
-
-    // Fetch case data from Airtable
     const caseData = await getCaseData(String(caseNumber))
     if (!caseData || !caseData.fields) {
       const errorResult: TriageResult = {
@@ -36,18 +32,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(errorResult)
     }
 
-    // Extract assessment and management fields
-    const fields = caseData.fields
     let assessmentText = ''
     let managementText = ''
-
-    for (const [key, value] of Object.entries(fields)) {
-      if (key === 'Assessment') {
-        assessmentText += (assessmentText ? '\n\n' : '') + value
-      }
-      if (key === 'Management') {
-        managementText += (managementText ? '\n\n' : '') + value
-      }
+    for (const [key, value] of Object.entries(caseData.fields)) {
+      if (key === 'Assessment') assessmentText += (assessmentText ? '\n\n' : '') + value
+      if (key === 'Management') managementText += (managementText ? '\n\n' : '') + value
     }
 
     if (!assessmentText && !managementText) {
@@ -65,71 +54,36 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(errorResult)
     }
 
-    // Build prompt and call AI
     const userPrompt = buildTriageUserPrompt(String(caseNumber), assessmentText, managementText)
     const maxSearches = parseInt(process.env.TRIAGE_MAX_SEARCHES ?? '3')
+    const effort = process.env.OPENAI_TRIAGE_EFFORT ?? process.env.OPENAI_REASONING_EFFORT ?? 'medium'
 
-    const aiResult = await callTriageAI(TRIAGE_SYSTEM_PROMPT, userPrompt, maxSearches)
-
-    // Parse the JSON response — extract JSON even if surrounded by text
-    let parsed: any
+    let aiResult
     try {
-      let clean = aiResult.textOutput
-        .replace(/```json\s*/g, '')
-        .replace(/```\s*/g, '')
-        .replace(/<cite[^>]*?\/>/g, '')
-        .replace(/<cite[^>]*>/g, '')
-        .replace(/<\/cite>/g, '')
-        .trim()
-
-      try {
-        parsed = JSON.parse(clean)
-      } catch {
-        // Find the first { and match its closing } using balanced braces
-        const jsonStart = clean.indexOf('{')
-        if (jsonStart !== -1) {
-          let depth = 0
-          let jsonEnd = -1
-          for (let i = jsonStart; i < clean.length; i++) {
-            if (clean[i] === '{') depth++
-            if (clean[i] === '}') depth--
-            if (depth === 0) { jsonEnd = i; break }
-          }
-          if (jsonEnd !== -1) {
-            const jsonStr = clean.slice(jsonStart, jsonEnd + 1)
-            try {
-              parsed = JSON.parse(jsonStr)
-            } catch {
-              const fixed = jsonStr.replace(/,\s*([}\]])/g, '$1')
-              parsed = JSON.parse(fixed)
-            }
-          } else {
-            throw new Error('No matching closing brace')
-          }
-        } else {
-          throw new Error('No JSON found')
-        }
-      }
-    } catch {
-      // If parsing fails, save as review-needed with the raw text
+      aiResult = await callTriageAI(TRIAGE_SYSTEM_PROMPT, userPrompt, {
+        schema: TRIAGE_SCHEMA,
+        schemaName: 'submit_analysis',
+        maxSearches,
+        effortOverride: effort,
+      })
+    } catch (err: any) {
       const fallback: TriageResult = {
         caseNumber: String(caseNumber),
         status: 'review-needed',
-        summary: `AI returned unparseable response. Raw: ${aiResult.textOutput.slice(0, 2000)}`,
-        searchCount: aiResult.searchCount,
-        citedUrls: aiResult.citedUrls,
-        provider: aiResult.provider,
-        model: aiResult.model,
+        summary: `Triage failed: ${err.message}`,
+        searchCount: 0,
+        citedUrls: [],
+        provider: '',
+        model: '',
         timestamp: new Date().toISOString(),
-        assessmentSnippet: assessmentText,
-        managementSnippet: managementText,
-        fullCaseFields: caseData.fields,
+        assessmentSnippet: assessmentText.slice(0, 4000),
+        managementSnippet: managementText.slice(0, 4000),
       }
       await saveTriageResult(fallback)
       return NextResponse.json(fallback)
     }
 
-    // Validate status
+    const parsed = aiResult.parsed
     const validStatuses = ['up-to-date', 'review-needed', 'outdated']
     const status = validStatuses.includes(parsed.status) ? parsed.status : 'review-needed'
 
@@ -144,14 +98,13 @@ export async function POST(req: NextRequest) {
       provider: aiResult.provider,
       model: aiResult.model,
       timestamp: new Date().toISOString(),
-      assessmentSnippet: assessmentText,
-      managementSnippet: managementText,
-      fullCaseFields: caseData.fields,
+      // Keep short snippets so the sidebar has something to show without re-fetching Airtable.
+      assessmentSnippet: assessmentText.slice(0, 4000),
+      managementSnippet: managementText.slice(0, 4000),
     }
 
     await saveTriageResult(result)
 
-    // Update metadata if in batch mode
     if (batchMode) {
       const meta = await getTriageMetadata()
       meta.casesScanned = (meta.casesScanned ?? 0) + 1
