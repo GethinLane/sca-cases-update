@@ -1,10 +1,16 @@
 // lib/triage-store.ts
 // Storage layer using Vercel Blob — ONE FILE PER CASE.
-// Each case is stored as triage/case-{number}.json
-// Metadata is stored as triage/meta.json
-// Falls back to in-memory if BLOB_READ_WRITE_TOKEN is not set.
+// Fails loudly if BLOB_READ_WRITE_TOKEN is not set — no silent in-memory fallback.
 
 import { put, list, get, del } from '@vercel/blob'
+
+// Fail fast at module load — better than silent data loss in serverless.
+if (!process.env.BLOB_READ_WRITE_TOKEN) {
+  throw new Error(
+    'BLOB_READ_WRITE_TOKEN is not set. Triage store requires Vercel Blob storage. ' +
+    'Set this env var locally (via `vercel env pull`) and in your deployment environment.',
+  )
+}
 
 export interface TriageResult {
   caseNumber: string
@@ -15,12 +21,14 @@ export interface TriageResult {
   provider: string
   model: string
   timestamp: string
+  /** First ~N chars of Assessment field, kept as a sidebar preview only. */
   assessmentSnippet?: string
+  /** First ~N chars of Management field, kept as a sidebar preview only. */
   managementSnippet?: string
-  // Full case fields stored so full-analysis can use them without re-fetching
-  fullCaseFields?: Record<string, string>
-  // Manual review timestamp — set when a human marks the case as reviewed
+  /** Manual review timestamp — set when a human marks the case as reviewed. */
   reviewedAt?: string
+  // NOTE: fullCaseFields has been removed. Full analysis now re-fetches from Airtable
+  // to guarantee it's looking at the current content.
 }
 
 export interface TriageMetadata {
@@ -29,21 +37,6 @@ export interface TriageMetadata {
   totalCases: number
   casesScanned: number
   scanInProgress: boolean
-}
-
-// ─── In-memory fallback ───────────────────────────────────────────
-
-const memResults: Record<string, TriageResult> = {}
-let memMeta: TriageMetadata = {
-  lastScanStarted: null,
-  lastScanCompleted: null,
-  totalCases: 0,
-  casesScanned: 0,
-  scanInProgress: false,
-}
-
-function useBlob(): boolean {
-  return !!process.env.BLOB_READ_WRITE_TOKEN
 }
 
 // ─── Blob helpers ─────────────────────────────────────────────────
@@ -71,73 +64,48 @@ async function readBlob(path: string): Promise<any | null> {
 }
 
 async function writeBlob(path: string, data: any): Promise<void> {
-  try {
-    await put(path, JSON.stringify(data), {
-      access: 'private',
-      contentType: 'application/json',
-      addRandomSuffix: false,
-      allowOverwrite: true,
-    })
-  } catch (err) {
-    console.error(`Error writing blob ${path}:`, err)
-  }
+  await put(path, JSON.stringify(data), {
+    access: 'private',
+    contentType: 'application/json',
+    addRandomSuffix: false,
+    allowOverwrite: true,
+  })
 }
 
 // ─── Public API ───────────────────────────────────────────────────
 
 export async function saveTriageResult(result: TriageResult): Promise<void> {
-  if (!useBlob()) {
-    memResults[result.caseNumber] = result
-    return
-  }
   await writeBlob(casePath(result.caseNumber), result)
 }
 
 export async function getTriageResult(caseNumber: string): Promise<TriageResult | null> {
-  if (!useBlob()) return memResults[caseNumber] ?? null
   return await readBlob(casePath(caseNumber))
 }
 
 export async function getAllTriageResults(): Promise<TriageResult[]> {
-  if (!useBlob()) {
-    return Object.values(memResults).sort((a, b) =>
-      (parseInt(a.caseNumber) || 0) - (parseInt(b.caseNumber) || 0)
-    )
-  }
-
   const results: TriageResult[] = []
 
-  // List all case blobs — Vercel Blob list returns up to 1000 per call
   let cursor: string | undefined
   do {
-    const page = await list({
-      prefix: 'triage/case-',
-      limit: 1000,
-      cursor,
-    })
-
-    // Fetch each blob's content
+    const page = await list({ prefix: 'triage/case-', limit: 1000, cursor })
     for (const blob of page.blobs) {
       try {
         const res = await get(blob.url, { access: 'private' })
         if (res && res.statusCode === 200) {
           const text = await new Response(res.stream).text()
-          const parsed = JSON.parse(text) as TriageResult
-          results.push(parsed)
+          results.push(JSON.parse(text) as TriageResult)
         }
       } catch { /* skip corrupt entries */ }
     }
-
     cursor = page.hasMore ? page.cursor : undefined
   } while (cursor)
 
   return results.sort((a, b) =>
-    (parseInt(a.caseNumber) || 0) - (parseInt(b.caseNumber) || 0)
+    (parseInt(a.caseNumber) || 0) - (parseInt(b.caseNumber) || 0),
   )
 }
 
 export async function getTriageMetadata(): Promise<TriageMetadata> {
-  if (!useBlob()) return memMeta
   const data = await readBlob(META_PATH)
   return data ?? {
     lastScanStarted: null,
@@ -149,18 +117,10 @@ export async function getTriageMetadata(): Promise<TriageMetadata> {
 }
 
 export async function saveTriageMetadata(meta: TriageMetadata): Promise<void> {
-  if (!useBlob()) {
-    memMeta = meta
-    return
-  }
   await writeBlob(META_PATH, meta)
 }
 
 export async function clearTriageResult(caseNumber: string): Promise<void> {
-  if (!useBlob()) {
-    delete memResults[caseNumber]
-    return
-  }
   try {
     const { blobs } = await list({ prefix: casePath(caseNumber), limit: 1 })
     const blob = blobs.find(b => b.pathname === casePath(caseNumber))
