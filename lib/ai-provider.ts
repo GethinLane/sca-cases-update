@@ -10,15 +10,7 @@ export function getTriageProvider(): TriageProvider {
 }
 
 export interface TriageAIResult {
-  /**
-   * Parsed JSON payload from the structured-output call.
-   * Callers that previously parsed `textOutput` manually should now use this directly.
-   */
   parsed: any
-  /**
-   * Raw text output from the model. Only populated when parsed is null (error fallback).
-   * Kept for debugging/logging only — do not parse this.
-   */
   textOutput: string
   searchCount: number
   citedUrls: string[]
@@ -28,60 +20,38 @@ export interface TriageAIResult {
 
 // ─── Anthropic ────────────────────────────────────────────────────
 
-async function callAnthropic(
-  systemPrompt: string,
-  userPrompt: string,
-  schema: object,
-  schemaName: string,
-  maxSearches: number,
-  modelOverride?: string,
-): Promise<Omit<TriageAIResult, 'provider' | 'model'> & { model: string }> {
+interface AnthropicCallArgs {
+  systemPrompt: string
+  userPrompt: string
+  schema: object
+  schemaName: string
+  maxSearches: number
+  model: string
+  maxTokens: number
+  /** If true, force the submit tool and DO NOT include web_search. Used on retry. */
+  forceSubmit?: boolean
+  /** Prior assistant text (from a first attempt that failed to call the tool). */
+  assistantPrefix?: string
+}
+
+async function anthropicRequest(args: AnthropicCallArgs) {
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
   if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not set')
 
-  const model = modelOverride ?? process.env.TRIAGE_ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001'
-  const isFullAnalysis = model.includes('sonnet') || model.includes('opus')
-  const maxTokens = isFullAnalysis ? 12000 : 5000
-
-  // Strategy: use a client tool `submit_analysis` whose input_schema is our desired JSON.
-  // - Compatible with web_search (unlike output_config.format which blocks citations).
-  // - Compatible with extended thinking (tool_choice stays "auto").
-  // - Model calls web_search as needed, then submits final answer via submit_analysis.
-  const submitAnalysisTool = {
-    name: 'submit_analysis',
+  const submitTool = {
+    name: args.schemaName,
     description:
-      'Submit your final analysis. Call this tool exactly once, as your final action, with the complete result. Do not respond with plain text.',
-    input_schema: schema,
+      'Submit your final analysis. Call this exactly once as your final action with the complete structured result. Do not respond with plain text.',
+    input_schema: args.schema,
   }
 
-  // Reinforce tool-use behaviour in the system prompt.
-  const augmentedSystem = `${systemPrompt}
-
-OUTPUT PROTOCOL:
-- You have two tools: web_search (for verifying clinical facts) and submit_analysis (for returning your final result).
-- Use web_search as many times as you need (up to ${maxSearches}) to verify claims against UK guidelines.
-- When your analysis is complete, you MUST call submit_analysis exactly once with the full structured result.
-- Do NOT return plain-text JSON. Only submit your answer via the submit_analysis tool call.`
-
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      system: [
-        { type: 'text', text: augmentedSystem, cache_control: { type: 'ephemeral' } },
-      ],
-      messages: [{ role: 'user', content: userPrompt }],
-      tools: [
+  const tools: any[] = args.forceSubmit
+    ? [submitTool]
+    : [
         {
           type: 'web_search_20250305',
           name: 'web_search',
-          max_uses: maxSearches,
+          max_uses: args.maxSearches,
           allowed_domains: getAllGuidelineDomainStrings(),
           user_location: {
             type: 'approximate',
@@ -90,58 +60,149 @@ OUTPUT PROTOCOL:
             timezone: 'Europe/London',
           },
         },
-        submitAnalysisTool,
-      ],
-      // tool_choice left as default (auto) — forced tool use would break extended thinking
-      // and would also prevent web_search from being called.
-    }),
+        submitTool,
+      ]
+
+  const messages: any[] = [{ role: 'user', content: args.userPrompt }]
+  if (args.assistantPrefix) {
+    messages.push({ role: 'assistant', content: args.assistantPrefix })
+    messages.push({
+      role: 'user',
+      content:
+        'You wrote your analysis as prose above. Now convert it into a submit_analysis tool call with the full structured result. Do not repeat the prose — just call the tool.',
+    })
+  }
+
+  const body: any = {
+    model: args.model,
+    max_tokens: args.maxTokens,
+    system: [
+      { type: 'text', text: args.systemPrompt, cache_control: { type: 'ephemeral' } },
+    ],
+    messages,
+    tools,
+  }
+
+  if (args.forceSubmit) {
+    body.tool_choice = { type: 'tool', name: args.schemaName }
+  }
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify(body),
   })
 
   const data = await response.json()
   if (data.error) {
     throw new Error(`Anthropic API error: ${data.error?.message ?? JSON.stringify(data.error)}`)
   }
+  return data
+}
 
-  let parsed: any = null
-  let textOutput = ''
-  const citedUrls: string[] = []
+async function callAnthropic(
+  systemPrompt: string,
+  userPrompt: string,
+  schema: object,
+  schemaName: string,
+  maxSearches: number,
+  modelOverride?: string,
+): Promise<Omit<TriageAIResult, 'provider'>> {
+  const model = modelOverride ?? process.env.TRIAGE_ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001'
+  const isHeavy = model.includes('sonnet') || model.includes('opus')
+  const maxTokens = isHeavy ? 12000 : 5000
 
-  for (const block of data.content ?? []) {
-    if (block.type === 'text') {
-      textOutput += (textOutput ? '\n' : '') + (block.text ?? '')
-      for (const citation of block.citations ?? []) {
-        if (citation.url && !citedUrls.includes(citation.url)) citedUrls.push(citation.url)
+  // Reinforce tool-use behaviour in the system prompt. Important: don't say
+  // "don't use web_search" — just tell it the final answer must go via submit_analysis.
+  const augmentedSystem = `${systemPrompt}
+
+OUTPUT PROTOCOL — READ THIS BEFORE RESPONDING:
+- You have two tools: web_search (for verifying clinical facts) and ${schemaName} (for returning your final result).
+- Use web_search as many times as you need (up to ${maxSearches}) to verify claims.
+- Your FINAL action in this response MUST be a call to ${schemaName} with the complete structured result.
+- DO NOT write your analysis as plain text. DO NOT write "Based on my search..." and then summarise findings in prose.
+- The only way to deliver your answer is by calling the ${schemaName} tool. Plain-text responses will be treated as incomplete and will waste a retry.`
+
+  // ── First attempt: web_search + submit tool, tool_choice: auto ──
+  let data = await anthropicRequest({
+    systemPrompt: augmentedSystem,
+    userPrompt,
+    schema,
+    schemaName,
+    maxSearches,
+    model,
+    maxTokens,
+  })
+
+  const extractOutputs = (responseData: any) => {
+    let parsed: any = null
+    let textOutput = ''
+    const urls: string[] = []
+    for (const block of responseData.content ?? []) {
+      if (block.type === 'text') {
+        textOutput += (textOutput ? '\n' : '') + (block.text ?? '')
+        for (const c of block.citations ?? []) {
+          if (c.url && !urls.includes(c.url)) urls.push(c.url)
+        }
       }
-    }
-    if (block.type === 'tool_use' && block.name === schemaName) {
-      // The tool `input` is the structured JSON we asked for.
-      parsed = block.input
-    }
-    if (block.type === 'web_search_tool_result') {
-      for (const item of block.content ?? []) {
-        if (item.type === 'web_search_result' && item.url && !citedUrls.includes(item.url)) {
-          citedUrls.push(item.url)
+      if (block.type === 'tool_use' && block.name === schemaName) {
+        parsed = block.input
+      }
+      if (block.type === 'web_search_tool_result') {
+        for (const item of block.content ?? []) {
+          if (item.type === 'web_search_result' && item.url && !urls.includes(item.url)) {
+            urls.push(item.url)
+          }
         }
       }
     }
+    return { parsed, textOutput, urls }
   }
 
-  // Also pull URLs that `parsed.sources` mentions, in case annotations missed them.
-  if (parsed && Array.isArray(parsed.sources)) {
-    for (const s of parsed.sources) {
-      if (s?.url && !citedUrls.includes(s.url)) citedUrls.push(s.url)
+  let { parsed, textOutput, urls } = extractOutputs(data)
+  let searchCount = data.usage?.server_tool_use?.web_search_requests ?? 0
+
+  // ── Retry path: model wrote prose instead of calling the tool ──
+  if (!parsed && textOutput.trim().length > 0) {
+    console.log('[anthropic] submit tool not called on first attempt — retrying with forced tool choice')
+
+    const retryData = await anthropicRequest({
+      systemPrompt: augmentedSystem,
+      userPrompt,
+      schema,
+      schemaName,
+      maxSearches: 0,
+      model,
+      maxTokens,
+      forceSubmit: true,
+      assistantPrefix: textOutput,
+    })
+
+    const retry = extractOutputs(retryData)
+    if (retry.parsed) {
+      parsed = retry.parsed
+      for (const u of retry.urls) if (!urls.includes(u)) urls.push(u)
     }
   }
 
-  const searchCount = data.usage?.server_tool_use?.web_search_requests ?? 0
+  // Merge sources from the parsed result too, in case annotations missed anything
+  if (parsed && Array.isArray(parsed.sources)) {
+    for (const s of parsed.sources) {
+      if (s?.url && !urls.includes(s.url)) urls.push(s.url)
+    }
+  }
 
   if (!parsed) {
     throw new Error(
-      `Anthropic did not call submit_analysis. Stop reason: ${data.stop_reason}. Text preview: ${textOutput.slice(0, 500)}`,
+      `Anthropic did not call ${schemaName} even after retry. Stop reason: ${data.stop_reason}. Text preview: ${textOutput.slice(0, 500)}`,
     )
   }
 
-  return { parsed, textOutput, searchCount, citedUrls, model }
+  return { parsed, textOutput, searchCount, citedUrls: urls, model }
 }
 
 // ─── OpenAI ───────────────────────────────────────────────────────
@@ -153,7 +214,7 @@ async function callOpenAI(
   schemaName: string,
   effortOverride?: string,
   modelOverride?: string,
-): Promise<Omit<TriageAIResult, 'provider' | 'model'> & { model: string }> {
+): Promise<Omit<TriageAIResult, 'provider'>> {
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY
   if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not set')
 
@@ -209,7 +270,6 @@ async function callOpenAI(
     if (block.type === 'web_search_call') searchCount++
   }
 
-  // With strict json_schema, the response is guaranteed valid JSON. Parse directly.
   let parsed: any
   try {
     parsed = JSON.parse(textOutput)
@@ -217,7 +277,6 @@ async function callOpenAI(
     throw new Error(`OpenAI returned non-JSON despite strict schema: ${err.message}. Preview: ${textOutput.slice(0, 300)}`)
   }
 
-  // Merge URLs from the parsed sources array too.
   if (Array.isArray(parsed.sources)) {
     for (const s of parsed.sources) {
       if (s?.url && !citedUrls.includes(s.url)) citedUrls.push(s.url)
@@ -230,15 +289,10 @@ async function callOpenAI(
 // ─── Public dispatcher ────────────────────────────────────────────
 
 export interface CallTriageAIOptions {
-  /** JSON schema describing the required output shape. */
   schema: object
-  /** Name for the schema/tool (e.g. "submit_analysis"). */
   schemaName: string
-  /** Max web_search calls. */
   maxSearches?: number
-  /** Override the model (e.g. Sonnet for full analysis). */
   modelOverride?: string
-  /** Override OpenAI reasoning effort (low|medium|high|xhigh). */
   effortOverride?: string
 }
 
