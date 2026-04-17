@@ -1,7 +1,7 @@
 // app/api/sync-cases/route.ts
-// Fetches case Assessment + Management fields from Airtable.
-// Stores each case as its own blob file — no race conditions.
-// Airtable rate limit: 5 req/s. We do 2 req every 2s = 1 req/s (safe margin).
+// Primes the triage store with one entry per case so the dashboard has a complete list.
+// Only stores short snippets for the sidebar preview — full content is re-fetched from
+// Airtable at analysis time to avoid stale data.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getCaseData } from '@/lib/airtable'
@@ -26,20 +26,18 @@ export async function POST(req: NextRequest) {
 
     for (let i = startCase; i <= endCase; i += batchSize) {
       const batch: number[] = []
-      for (let j = i; j < i + batchSize && j <= endCase; j++) {
-        batch.push(j)
-      }
+      for (let j = i; j < i + batchSize && j <= endCase; j++) batch.push(j)
 
       const batchResults = await Promise.allSettled(
         batch.map(async (caseNum) => {
           const data = await getCaseData(String(caseNum))
           return { caseNum, data }
-        })
+        }),
       )
 
       for (const result of batchResults) {
         if (result.status === 'rejected') {
-          errors.push(`Case ${batch}: ${result.reason?.message ?? 'Unknown error'}`)
+          errors.push(`Case batch error: ${result.reason?.message ?? 'Unknown'}`)
           continue
         }
 
@@ -50,30 +48,24 @@ export async function POST(req: NextRequest) {
           continue
         }
 
-        // Extract ONLY Assessment and Management fields (exact match)
         let assessmentText = ''
         let managementText = ''
-
         for (const [key, value] of Object.entries(data.fields)) {
-          if (key === 'Assessment') {
-            assessmentText += (assessmentText ? '\n\n' : '') + value
-          }
-          if (key === 'Management') {
-            managementText += (managementText ? '\n\n' : '') + value
-          }
+          if (key === 'Assessment') assessmentText += (assessmentText ? '\n\n' : '') + value
+          if (key === 'Management') managementText += (managementText ? '\n\n' : '') + value
         }
 
-        // Check if we already have a triage result for this case
-        const existing = await getTriageResult(String(caseNum))
+        // Keep only SHORT snippets for sidebar display. Full content re-fetched at analysis time.
+        const assessmentSnippet = assessmentText.slice(0, 4000)
+        const managementSnippet = managementText.slice(0, 4000)
 
+        const existing = await getTriageResult(String(caseNum))
         if (existing && existing.status !== 'pending') {
-          // Preserve existing triage status, just update the case text
-          existing.assessmentSnippet = assessmentText
-          existing.managementSnippet = managementText
-          existing.fullCaseFields = data.fields
+          // Preserve existing triage status, just refresh the snippets.
+          existing.assessmentSnippet = assessmentSnippet
+          existing.managementSnippet = managementSnippet
           await saveTriageResult(existing)
         } else {
-          // New entry
           await saveTriageResult({
             caseNumber: String(caseNum),
             status: 'pending',
@@ -83,21 +75,16 @@ export async function POST(req: NextRequest) {
             provider: '',
             model: '',
             timestamp: new Date().toISOString(),
-            assessmentSnippet: assessmentText,
-            managementSnippet: managementText,
-            fullCaseFields: data.fields,
+            assessmentSnippet,
+            managementSnippet,
           })
         }
         synced++
       }
 
-      // Rate limit pause between batches
-      if (i + batchSize <= endCase) {
-        await new Promise(r => setTimeout(r, delayMs))
-      }
+      if (i + batchSize <= endCase) await new Promise(r => setTimeout(r, delayMs))
     }
 
-    // Update metadata
     const meta = await getTriageMetadata()
     meta.totalCases = totalCases
     await saveTriageMetadata(meta)
