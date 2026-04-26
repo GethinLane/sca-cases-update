@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { callTriageAI } from '@/lib/ai-provider'
 import { ANALYSE_CASE_SCHEMA } from '@/lib/schemas'
 
-export const maxDuration = 180
+export const maxDuration = 300
 
 const SYSTEM_PROMPT = `You are a medical education quality reviewer for MRCGP SCA (Simulated Consultation Assessment) exam cases.
 Your job is to assess user-submitted corrections or issues against the actual case content, verify them against current UK clinical guidelines using web search, and produce structured recommendations.
