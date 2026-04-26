@@ -157,6 +157,7 @@ ${extraContext}` : ''}`
       maxSearches,
       modelOverride,
       effortOverride: effort,
+      providerOverride: 'openai',
     })
 
     const parsed = result.parsed
