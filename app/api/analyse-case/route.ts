@@ -86,6 +86,14 @@ Every issue must appear as a fieldChange entry:
 
 Each distinct issue gets its own entry. Don't lump multiple issues into one.
 
+CRITICAL FOR suggestedText (copy/paste requirement):
+- suggestedText MUST be the exact final replacement text the editor can paste directly into the case field.
+- Do NOT write meta-instructions (e.g. "A condensed version...", "covering:", "remove...", "rewrite to...").
+- Do NOT describe what to change. Perform the change and provide the finished prose.
+- Write in normal case-authoring style (complete sentences/paragraphs), not bullet instructions unless the case field itself is a bullet list.
+- If updating part of a paragraph, still provide a coherent replacement passage ready to paste.
+- Never leave truncated/incomplete endings.
+
 ═══════════════════════════════════════════════════════════════════════
 EMAIL TONE
 ═══════════════════════════════════════════════════════════════════════
