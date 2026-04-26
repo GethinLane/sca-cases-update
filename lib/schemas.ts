@@ -52,7 +52,11 @@ export const ANALYSE_CASE_SCHEMA = {
           fieldName: { type: 'string' },
           currentText: { type: 'string' },
           issue: { type: 'string' },
-          suggestedText: { type: 'string' },
+          suggestedText: {
+            type: 'string',
+            description:
+              'Copy/paste-ready replacement text only. Must contain the finished rewritten wording for the field (or replacement passage), not editing instructions or summaries of what to change.',
+          },
           confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
         },
       },
