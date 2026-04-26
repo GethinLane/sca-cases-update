@@ -294,6 +294,7 @@ export interface CallTriageAIOptions {
   maxSearches?: number
   modelOverride?: string
   effortOverride?: string
+  providerOverride?: TriageProvider
 }
 
 export async function callTriageAI(
@@ -301,7 +302,7 @@ export async function callTriageAI(
   userPrompt: string,
   opts: CallTriageAIOptions,
 ): Promise<TriageAIResult> {
-  const provider = getTriageProvider()
+  const provider = opts.providerOverride ?? getTriageProvider()
   const maxSearches = opts.maxSearches ?? 3
 
   if (provider === 'anthropic') {
