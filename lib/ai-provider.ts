@@ -18,6 +18,78 @@ export interface TriageAIResult {
   model: string
 }
 
+/**
+ * Read an upstream API response that should be JSON. Differentiates transient
+ * infrastructure errors (Cloudflare 520, 502/503/504, 429, 408) — which the
+ * caller can retry — from real API errors. Avoids the cryptic
+ * "Unexpected token '<'" message when the upstream returns an HTML error page.
+ */
+async function readUpstreamJson(
+  response: Response,
+  upstreamName: string,
+): Promise<any> {
+  const text = await response.text()
+
+  if (!response.ok) {
+    const transient = response.status === 408
+      || response.status === 429
+      || response.status === 502
+      || response.status === 503
+      || response.status === 504
+      || response.status === 520
+      || response.status === 521
+      || response.status === 522
+      || response.status === 524
+    const preview = text.slice(0, 200).replace(/\s+/g, ' ').trim()
+    const err: any = new Error(
+      `${upstreamName} returned HTTP ${response.status}${preview ? ` — ${preview}` : ''}`,
+    )
+    err.transient = transient
+    err.status = response.status
+    throw err
+  }
+
+  try {
+    return JSON.parse(text)
+  } catch {
+    const err: any = new Error(
+      `${upstreamName} returned HTTP ${response.status} with non-JSON body: ${text.slice(0, 200)}`,
+    )
+    err.transient = false
+    err.status = response.status
+    throw err
+  }
+}
+
+/**
+ * Run an async upstream call with retry-with-backoff on transient errors.
+ * Total wait stays well under the route's maxDuration (300s).
+ */
+async function withRetry<T>(
+  upstreamName: string,
+  fn: () => Promise<T>,
+  maxAttempts = 3,
+): Promise<T> {
+  let lastErr: any
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn()
+    } catch (err: any) {
+      lastErr = err
+      const isTransient = err?.transient === true
+        || err?.name === 'AbortError'
+        || /fetch failed|ECONN|ETIMEDOUT|socket hang up/i.test(err?.message ?? '')
+      if (!isTransient || attempt === maxAttempts) throw err
+      const backoffMs = 2000 * attempt
+      console.warn(
+        `[${upstreamName}] attempt ${attempt} failed (${err.message}); retrying in ${backoffMs}ms`,
+      )
+      await new Promise(r => setTimeout(r, backoffMs))
+    }
+  }
+  throw lastErr
+}
+
 // ─── Anthropic ────────────────────────────────────────────────────
 
 interface AnthropicCallArgs {
@@ -87,17 +159,20 @@ async function anthropicRequest(args: AnthropicCallArgs) {
     body.tool_choice = { type: 'tool', name: args.schemaName }
   }
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify(body),
+  const data = await withRetry('anthropic', async () => {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(body),
+    })
+
+    return await readUpstreamJson(response, 'Anthropic')
   })
 
-  const data = await response.json()
   if (data.error) {
     throw new Error(`Anthropic API error: ${data.error?.message ?? JSON.stringify(data.error)}`)
   }
@@ -221,30 +296,33 @@ async function callOpenAI(
   const model = modelOverride ?? process.env.TRIAGE_OPENAI_MODEL ?? 'gpt-5.4-mini'
   const effort = effortOverride ?? process.env.OPENAI_REASONING_EFFORT ?? 'medium'
 
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model,
-      tools: [{ type: 'web_search_preview' }],
-      instructions: systemPrompt,
-      input: userPrompt,
-      reasoning: { effort },
-      text: {
-        format: {
-          type: 'json_schema',
-          name: schemaName,
-          strict: true,
-          schema,
-        },
+  const data = await withRetry('openai', async () => {
+    const response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
       },
-    }),
+      body: JSON.stringify({
+        model,
+        tools: [{ type: 'web_search_preview' }],
+        instructions: systemPrompt,
+        input: userPrompt,
+        reasoning: { effort },
+        text: {
+          format: {
+            type: 'json_schema',
+            name: schemaName,
+            strict: true,
+            schema,
+          },
+        },
+      }),
+    })
+
+    return await readUpstreamJson(response, 'OpenAI')
   })
 
-  const data = await response.json()
   if (data.error) {
     throw new Error(`OpenAI API error: ${data.error?.code} — ${data.error?.message}`)
   }
