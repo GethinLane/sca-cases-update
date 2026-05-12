@@ -196,6 +196,7 @@ export default function Dashboard() {
           <nav className={styles.headerNav}>
             <Link href="/" className={`${styles.navLink} ${styles.navLinkActive}`}>Feedback Review</Link>
             <Link href="/audit" className={styles.navLink}>Guideline Audit</Link>
+            <Link href="/transcripts" className={styles.navLink}>Transcript Insights</Link>
           </nav>
         </div>
       </header>

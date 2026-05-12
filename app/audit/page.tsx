@@ -319,6 +319,7 @@ export default function AuditDashboard() {
           <nav className={styles.headerNav}>
             <Link href="/" className={styles.navLink}>Feedback Review</Link>
             <Link href="/audit" className={`${styles.navLink} ${styles.navLinkActive}`}>Guideline Audit</Link>
+            <Link href="/transcripts" className={styles.navLink}>Transcript Insights</Link>
           </nav>
         </div>
       </header>

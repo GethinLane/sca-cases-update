@@ -17,8 +17,9 @@ npm install
 - Go to https://airtable.com/create/tokens
 - Create a token with these scopes:
   - `data.records:read`
+  - `data.records:write` (required for Transcript Insights → "Missing Case Details" writes)
   - `schema.bases:read`
-- Add access to both your Cases base and your Feedback base
+- Add access to all three bases: Cases base, Feedback base, and Transcripts ("Users ai") base
 
 ### 4. Find your Base IDs
 - Open your Airtable base in the browser
@@ -35,6 +36,8 @@ Then edit `.env.local` and fill in:
 AIRTABLE_TOKEN=pat...
 AIRTABLE_FEEDBACK_BASE_ID=app...
 AIRTABLE_CASES_BASE_ID=app...
+AIRTABLE_TRANSCRIPTS_BASE_ID=app...   # "Users ai" base — only needed for Transcript Insights
+OPENAI_API_KEY=sk-...                 # Required for Transcript Insights (uses gpt-5.4-mini)
 ```
 
 ### 6. Run locally
@@ -49,10 +52,12 @@ Open http://localhost:3000
 
 1. Push this project to a GitHub repo
 2. Go to https://vercel.com and import the repo
-3. In Vercel project settings → Environment Variables, add the same three variables:
+3. In Vercel project settings → Environment Variables, add the same variables:
    - `AIRTABLE_TOKEN`
    - `AIRTABLE_FEEDBACK_BASE_ID`
    - `AIRTABLE_CASES_BASE_ID`
+   - `AIRTABLE_TRANSCRIPTS_BASE_ID` (for Transcript Insights)
+   - `OPENAI_API_KEY` (for Transcript Insights)
 4. Deploy — done!
 
 ---
@@ -79,3 +84,34 @@ Open http://localhost:3000
 
 **Cases base — one table per case, named "Case 1", "Case 2", etc.**
 Each table can have multiple rows; all rows are merged into a single field map for analysis.
+
+---
+
+## Transcript Insights (`/transcripts`)
+
+Scans a day of bot conversations for recurring patient questions where the bot hedged or said it didn't know, then judges clinical relevance and suggests case content to add.
+
+**Source — Users ai base, "Attempts" table:**
+- `CaseID` — string/number, the case the candidate practised
+- `Transcript` — long text, the full bot/candidate conversation
+- `CreatedAt` — date or datetime, used to filter by day
+
+**Output — Feedback base, "Missing Case Details" table (create this manually with these exact column names):**
+- `CaseID` — single line text
+- `Question` — long text
+- `Frequency` — number (integer)
+- `Clinically Relevant` — single select (`Yes` / `No`) or single line text
+- `Relevance Reason` — long text
+- `Suggested Addition` — long text
+- `Example Quotes` — long text
+- `Analysed Date` — date
+
+**How it works:**
+1. Pick a date → `/api/transcripts/fetch` pulls up to 300 rows from "Attempts" where `CreatedAt` is that day.
+2. The client batches them 50 at a time and calls `/api/transcripts/analyse`, which sends each batch to `gpt-5.4-mini` with a strict JSON schema asking for: question, frequency, clinical relevance, suggested addition, example quotes.
+3. Findings from all batches are merged client-side (deduped by case + normalised question).
+4. Clinically relevant rows are pre-ticked; click "Save selected" to write to "Missing Case Details" via `/api/transcripts/save`.
+
+**Optional env overrides:**
+- `TRANSCRIPTS_OPENAI_MODEL` — default `gpt-5.4-mini`
+- `OPENAI_TRANSCRIPTS_EFFORT` — default `medium` (set `low` for speed, `high` for tougher cases)
