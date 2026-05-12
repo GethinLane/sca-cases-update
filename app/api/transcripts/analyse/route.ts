@@ -43,18 +43,51 @@ Every finding MUST list the exact idx values of the transcript(s) the deflection
   • Never copy a CaseID from a different transcript. Never invent a CaseID.
 
 ═══════════════════════════════════════════════════════════════════════
-WHAT YOU ARE LOOKING FOR
+WHAT YOU ARE LOOKING FOR — INAPPROPRIATE DEFLECTIONS ONLY
 ═══════════════════════════════════════════════════════════════════════
-A "bot deflection" is when the CANDIDATE asks the patient something and the BOT (an "Assistant:" line) replies with hedging/uncertainty/refusal, e.g.:
-  • "I'm not sure"
-  • "I don't know"
-  • "I'm not certain"
-  • "I don't know if that's relevant"
-  • "That's not something I'd remember"
-  • "I don't have that information"
-  • "I'm not sure how to answer that"
+You are NOT cataloguing every time the bot said "I don't know". A real human patient genuinely doesn't know lots of things — that's normal. You are looking ONLY for cases where the bot's "I don't know" / hedge is INAPPROPRIATE because it points to a gap in the case material.
 
-The DEFLECTION MUST APPEAR IN AN "Assistant:" LINE. If the hedge is in a "User:" line, that is the DOCTOR speaking — IGNORE IT.
+There are exactly TWO categories of inappropriate deflection that count:
+
+CATEGORY A — "the patient should have known this about themselves"
+  The candidate asked about something a patient with this case would naturally know (their own history, current medications, symptoms, family, social context, work, etc.), and the bot answered with hedging because the case content simply didn't tell it.
+  Examples of patient-self knowledge:
+    • Do you smoke? How much? For how long?
+    • What medications are you on? Do you take them regularly?
+    • Have you had this symptom before?
+    • Do you live alone? Who's at home?
+    • Has anything like this happened to anyone in your family?
+    • Have you ever had a colonoscopy / smear / mammogram?
+    • How long have you had the pain?
+
+CATEGORY B — "is that relevant here?" style meta-deflections
+  Out-of-character lines where the bot questions WHY the candidate is asking, rather than answering as the patient:
+    • "I'm not sure if that's relevant here"
+    • "I don't know if you need to know that"
+    • "Is that relevant to today?"
+    • "I'm not sure why that matters"
+    • "I don't really see how that's related"
+
+═══════════════════════════════════════════════════════════════════════
+WHAT TO IGNORE — DO NOT EMIT FINDINGS FOR ANY OF THESE
+═══════════════════════════════════════════════════════════════════════
+❌ Bot saying it doesn't know MEDICAL KNOWLEDGE. A patient wouldn't know:
+   "What does Group B Strep mean?" → bot saying "I don't know much about it" = CORRECT BEHAVIOUR. SKIP.
+   "What might the chest X-ray show?" → bot saying "I'm not sure" = CORRECT. SKIP.
+   "What is causing the white cells?" → bot saying "I'm not sure" = CORRECT. SKIP.
+   "What would reporting to the police involve?" → bot saying "I don't know what that would involve" = CORRECT. SKIP.
+
+❌ Bot expressing emotional uncertainty or overwhelm:
+   "I'm not sure, this is all just feeling overwhelming" = a normal emotional response. SKIP.
+
+❌ Bot asking the doctor a question (patient curiosity is fine):
+   "Could I just be seen tomorrow at the practice?" = patient question. SKIP.
+
+❌ Bot hedging on minor sensory details ("I'm not sure exactly what time it started") UNLESS the candidate specifically pressed and the timing is clinically pivotal. Default = SKIP.
+
+❌ Anything where the bot's answer actually contains real information ("No cuts that I can think of. I'm not sure about bruising.") — the bot answered "no cuts" and only hedged on bruising, which is a normal patient response. SKIP.
+
+❌ Lines spoken by "User:" (the doctor). User hedges are never deflections.
 
 ═══════════════════════════════════════════════════════════════════════
 EXAMPLES — DO vs DON'T
@@ -77,12 +110,12 @@ EXAMPLES — DO vs DON'T
 HARD RULES
 ═══════════════════════════════════════════════════════════════════════
 1. NEVER emit a finding unless you can quote the EXACT "Assistant:" line containing the deflection phrase. Put that verbatim line in botResponse.
-2. If no Assistant turn contains a hedge phrase, return { "findings": [] }. Empty is correct.
-3. The patient/Assistant asking the doctor questions is normal role-play — NEVER a deflection.
-4. The doctor/User giving advice or admitting uncertainty is NEVER a bot turn — IGNORE.
-5. exampleQuotes must be the "User:" line(s) that PRECEDE the deflection — never an "Assistant:" line.
-6. botResponse must be the "Assistant:" line(s) containing the hedge — never a "User:" line.
-7. Better to return no findings than to fabricate ones.
+2. exampleQuotes (the User: line that triggered it) and botResponse (the Assistant: line containing the hedge) MUST be DIFFERENT TEXT. If you can't find two different lines, it isn't a real deflection — drop it.
+3. If no Assistant turn contains an INAPPROPRIATE hedge (Category A or B above), return { "findings": [] }. Empty is correct and expected most of the time.
+4. The patient/Assistant asking the doctor questions is normal role-play — NEVER a deflection.
+5. The doctor/User giving advice or admitting uncertainty is NEVER a bot turn — IGNORE.
+6. Every finding MUST be assigned a deflectionType of "patient_should_have_known" (Category A) or "meta_relevance" (Category B). If you can't justify which category it fits, the finding doesn't qualify — drop it.
+7. Better to return zero findings than to flag appropriate "I don't know"s.
 
 ═══════════════════════════════════════════════════════════════════════
 ONE FINDING PER QUESTION-PER-CASE — HARD RULE
@@ -244,6 +277,25 @@ ${blocks.join('\n\n')}`
         })
         overrideCount++
       }
+
+      // Anti-mix-up guard: if exampleQuotes (User: line) and botResponse
+      // (Assistant: line) are the same text, the model conflated the two
+      // sides and the finding is unreliable.
+      const normalised = (s: string) =>
+        (s ?? '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim()
+      if (
+        f.exampleQuotes &&
+        f.botResponse &&
+        normalised(f.exampleQuotes) === normalised(f.botResponse)
+      ) {
+        console.warn('[transcripts/analyse] dropping finding — exampleQuotes == botResponse', {
+          caseId: realCaseId,
+          text: String(f.exampleQuotes).slice(0, 120),
+        })
+        droppedCount++
+        continue
+      }
+
       correctedFindings.push({ ...f, caseId: realCaseId })
     }
 

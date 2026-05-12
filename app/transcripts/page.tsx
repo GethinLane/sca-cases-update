@@ -20,6 +20,7 @@ interface Finding {
   suggestedAddition: string
   exampleQuotes: string
   botResponse: string
+  deflectionType: 'patient_should_have_known' | 'meta_relevance'
   // Server-attached for diagnostics; may be missing on legacy responses.
   transcriptIndices?: number[]
 }
@@ -192,6 +193,7 @@ export default function TranscriptsPage() {
         suggestedAddition: f.suggestedAddition,
         exampleQuotes: f.exampleQuotes,
         botResponse: f.botResponse,
+        deflectionType: f.deflectionType,
         analysedDate: date,
       }))
 
@@ -434,6 +436,14 @@ export default function TranscriptsPage() {
                           {isExpanded && (
                             <tr className={styles.expandedRow}>
                               <td colSpan={6}>
+                                <div className={styles.expandedLabel}>Deflection type</div>
+                                <p className={styles.expandedBody}>
+                                  {f.deflectionType === 'patient_should_have_known'
+                                    ? 'Patient should have known (case content gap)'
+                                    : f.deflectionType === 'meta_relevance'
+                                      ? 'Meta / relevance challenge (out-of-character)'
+                                      : '—'}
+                                </p>
                                 <div className={styles.expandedLabel}>Relevance reason</div>
                                 <p className={styles.expandedBody}>{f.relevanceReason || '—'}</p>
                                 <div className={styles.expandedLabel}>Candidate quotes (the question asked)</div>

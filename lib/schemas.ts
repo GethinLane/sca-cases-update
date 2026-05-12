@@ -143,6 +143,7 @@ export const TRANSCRIPT_ANALYSIS_SCHEMA = {
         required: [
           'transcriptIndices',
           'caseId',
+          'deflectionType',
           'question',
           'frequency',
           'clinicallyRelevant',
@@ -163,6 +164,12 @@ export const TRANSCRIPT_ANALYSIS_SCHEMA = {
             type: 'string',
             description:
               'Copy the EXACT value of the "id" attribute from the <transcript> tag containing the deflection. Must match the id of every transcript listed in transcriptIndices (all transcriptIndices in one finding must belong to the same case). The server will overwrite this with the authoritative value — but if you put the wrong one here, your transcriptIndices are probably wrong too.',
+          },
+          deflectionType: {
+            type: 'string',
+            enum: ['patient_should_have_known', 'meta_relevance'],
+            description:
+              'Which inappropriate-deflection category this fits. "patient_should_have_known" = bot hedged on a fact a patient with this case would know about themselves (own history, medications, symptoms, social context). "meta_relevance" = bot questioned whether the question was relevant (out-of-character meta line). If neither cleanly fits, do not emit a finding at all.',
           },
           question: {
             type: 'string',

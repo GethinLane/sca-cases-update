@@ -170,6 +170,7 @@ export interface MissingDetailRecord {
   suggestedAddition: string
   exampleQuotes: string
   botResponse: string
+  deflectionType: 'patient_should_have_known' | 'meta_relevance'
   analysedDate: string
 }
 
@@ -202,6 +203,10 @@ export async function saveMissingCaseDetails(
         'Suggested Addition': r.suggestedAddition,
         'Example Quotes': r.exampleQuotes,
         'Bot Response': r.botResponse,
+        'Deflection Type':
+          r.deflectionType === 'patient_should_have_known'
+            ? 'Patient should have known'
+            : 'Meta / relevance challenge',
         'Analysed Date': r.analysedDate,
       },
     }))
