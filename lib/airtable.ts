@@ -6,12 +6,16 @@ const FEEDBACK_BASE_ID = process.env.AIRTABLE_FEEDBACK_BASE_ID!
 const CASES_BASE_ID = process.env.AIRTABLE_CASES_BASE_ID!
 const TRANSCRIPTS_BASE_ID = process.env.AIRTABLE_TRANSCRIPTS_BASE_ID!
 const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN!
+// Optional: the "Users ai" base uses its own personal-access token. Falls back
+// to the main token if not set so older deployments keep working.
+const AIRTABLE_TRANSCRIPTS_TOKEN =
+  process.env.AIRTABLE_TRANSCRIPTS_TOKEN || process.env.AIRTABLE_TOKEN!
 
 const AT_BASE = 'https://api.airtable.com/v0'
 
-async function airtableFetch(url: string) {
+async function airtableFetch(url: string, token: string = AIRTABLE_TOKEN) {
   const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
+    headers: { Authorization: `Bearer ${token}` },
     next: { revalidate: 0 },
   })
   if (!res.ok) {
@@ -21,11 +25,11 @@ async function airtableFetch(url: string) {
   return res.json()
 }
 
-async function airtablePost(url: string, body: unknown) {
+async function airtablePost(url: string, body: unknown, token: string = AIRTABLE_TOKEN) {
   const res = await fetch(url, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${AIRTABLE_TOKEN}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
@@ -135,7 +139,7 @@ export async function getTranscriptsForDate(
     if (offset) params.push(`offset=${encodeURIComponent(offset)}`)
 
     const url = `${AT_BASE}/${TRANSCRIPTS_BASE_ID}/${encodedTable}?${params.join('&')}`
-    const data = await airtableFetch(url)
+    const data = await airtableFetch(url, AIRTABLE_TRANSCRIPTS_TOKEN)
 
     for (const r of data.records || []) {
       rows.push({

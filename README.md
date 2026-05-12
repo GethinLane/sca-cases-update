@@ -33,10 +33,11 @@ cp .env.example .env.local
 ```
 Then edit `.env.local` and fill in:
 ```
-AIRTABLE_TOKEN=pat...
+AIRTABLE_TOKEN=pat...                 # Default token (Cases base + Feedback base)
 AIRTABLE_FEEDBACK_BASE_ID=app...
 AIRTABLE_CASES_BASE_ID=app...
 AIRTABLE_TRANSCRIPTS_BASE_ID=app...   # "Users ai" base — only needed for Transcript Insights
+AIRTABLE_TRANSCRIPTS_TOKEN=pat...     # Separate token for the "Users ai" base (falls back to AIRTABLE_TOKEN if unset)
 OPENAI_API_KEY=sk-...                 # Required for Transcript Insights (uses gpt-5.4-mini)
 ```
 
@@ -57,6 +58,7 @@ Open http://localhost:3000
    - `AIRTABLE_FEEDBACK_BASE_ID`
    - `AIRTABLE_CASES_BASE_ID`
    - `AIRTABLE_TRANSCRIPTS_BASE_ID` (for Transcript Insights)
+   - `AIRTABLE_TRANSCRIPTS_TOKEN` (separate token for the "Users ai" base; optional — falls back to `AIRTABLE_TOKEN`)
    - `OPENAI_API_KEY` (for Transcript Insights)
 4. Deploy — done!
 
