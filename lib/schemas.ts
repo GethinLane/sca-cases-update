@@ -122,6 +122,75 @@ export const TRIAGE_SCHEMA = {
   },
 } as const
 
+/**
+ * Schema for analysing a batch of bot/patient transcripts to find recurring
+ * questions where the bot couldn't answer ("I don't know", "not relevant here",
+ * "I'm not sure", etc.) and judging whether the missing info was clinically
+ * relevant. One finding per distinct question per case.
+ */
+export const TRANSCRIPT_ANALYSIS_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['findings'],
+  properties: {
+    findings: {
+      type: 'array',
+      description:
+        'One entry per distinct question (in this batch) where the bot deflected, hedged, or said it did not know. Group equivalent paraphrases into a single entry and bump frequency. Skip questions that are clearly off-clinical (clothing, hobbies) UNLESS they recur often enough to be worth noting.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'caseId',
+          'question',
+          'frequency',
+          'clinicallyRelevant',
+          'relevanceReason',
+          'suggestedAddition',
+          'exampleQuotes',
+        ],
+        properties: {
+          caseId: {
+            type: 'string',
+            description: 'The CaseID this question was asked about. Copy from the transcript header.',
+          },
+          question: {
+            type: 'string',
+            description:
+              'The recurring patient question, normalised to a clean canonical phrasing (not a verbatim quote).',
+          },
+          frequency: {
+            type: 'integer',
+            minimum: 1,
+            description: 'How many separate transcripts in this batch contained this question (or a clear paraphrase).',
+          },
+          clinicallyRelevant: {
+            type: 'string',
+            enum: ['Yes', 'No'],
+            description:
+              'Yes if knowing the answer would plausibly change the consultation (history-taking, diagnosis, risk assessment, management, safety-netting). No for irrelevant chit-chat (e.g. clothing, hobbies, names of pets).',
+          },
+          relevanceReason: {
+            type: 'string',
+            description:
+              'One sentence explaining why this is or is not clinically relevant for this case.',
+          },
+          suggestedAddition: {
+            type: 'string',
+            description:
+              'If clinically relevant: a copy/paste-ready sentence the case author can add to the case content to answer this question. If not relevant: empty string.',
+          },
+          exampleQuotes: {
+            type: 'string',
+            description:
+              'Up to 3 short verbatim user quotes from transcripts that triggered the bot hedge, separated by " | ".',
+          },
+        },
+      },
+    },
+  },
+} as const
+
 export const FULL_ANALYSIS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
