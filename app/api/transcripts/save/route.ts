@@ -17,6 +17,10 @@ export async function POST(req: NextRequest) {
   try {
     const result = await saveMissingCaseDetails(findings)
     if (result.errors.length > 0) {
+      console.error(
+        `[transcripts/save] partial failure: ${result.created} created, ${result.errors.length} batches failed.`,
+        '\nFirst Airtable error:', result.errors[0],
+      )
       return NextResponse.json({
         created: result.created,
         errors: result.errors,

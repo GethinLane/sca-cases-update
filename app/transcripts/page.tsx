@@ -186,7 +186,16 @@ export default function TranscriptsPage() {
         analysedDate: date,
       }))
 
-    if (toSave.length === 0) return
+    console.log('[transcripts] save clicked', {
+      totalFindings: findings.length,
+      selectedKeys: Object.keys(selected).filter(k => selected[Number(k)]),
+      toSaveCount: toSave.length,
+    })
+
+    if (toSave.length === 0) {
+      setSaveResult({ kind: 'err', text: 'Nothing selected — tick at least one row before saving.' })
+      return
+    }
     setSaving(true)
     setSaveResult(null)
     try {
@@ -195,18 +204,34 @@ export default function TranscriptsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ findings: toSave }),
       })
-      const data = await readJson(res)
+      const rawText = await res.text()
+      console.log('[transcripts] save response', { status: res.status, body: rawText.slice(0, 500) })
+
+      let data: any = {}
+      try { data = JSON.parse(rawText) } catch { /* non-JSON response handled below */ }
+
       if (res.ok) {
-        setSaveResult({ kind: 'ok', text: `Saved ${data.created} row${data.created === 1 ? '' : 's'} to Missing Case Details.` })
+        setSaveResult({
+          kind: 'ok',
+          text: `Saved ${data.created ?? '?'} row${data.created === 1 ? '' : 's'} to Missing Case Details.`,
+        })
       } else if (res.status === 207) {
+        const firstErr = data.errors?.[0] ?? 'unknown'
         setSaveResult({
           kind: 'err',
-          text: `Partial save: ${data.created} succeeded, ${data.errors?.length ?? 0} failed. First error: ${data.errors?.[0] ?? 'unknown'}`,
+          text: `Airtable rejected the write — saved ${data.created ?? 0}, failed ${data.errors?.length ?? 0} batch(es). First error from Airtable: ${firstErr}`,
+        })
+      } else if (res.status === 401 || res.status === 403) {
+        setSaveResult({
+          kind: 'err',
+          text: 'Save failed: session expired. Refresh the page and sign in again.',
         })
       } else {
-        throw new Error(data.error ?? `HTTP ${res.status}`)
+        const detail = data.error ?? rawText.slice(0, 300) ?? `HTTP ${res.status}`
+        throw new Error(`HTTP ${res.status} — ${detail}`)
       }
     } catch (err: any) {
+      console.error('[transcripts] save error', err)
       setSaveResult({ kind: 'err', text: `Save failed: ${err.message}` })
     } finally {
       setSaving(false)
@@ -414,19 +439,30 @@ export default function TranscriptsPage() {
                 </table>
               </div>
 
+              {saveResult && (
+                <div
+                  className={saveResult.kind === 'ok' ? styles.successBox : styles.errorBox}
+                  style={{ margin: '0 20px', borderRadius: 0 }}
+                >
+                  {saveResult.text}
+                </div>
+              )}
               <div className={styles.footerBar}>
                 <span className={styles.selectedCount}>
-                  {selectedCount} selected
+                  {selectedCount === 0
+                    ? 'Tick rows above to enable save'
+                    : `${selectedCount} selected`}
                 </span>
                 <button
                   className={styles.primaryBtn}
                   onClick={saveSelected}
                   disabled={saving || selectedCount === 0}
+                  title={selectedCount === 0 ? 'Select at least one row' : ''}
                 >
                   {saving ? (
                     <><span className={styles.spinner} /> Saving…</>
                   ) : (
-                    <>💾 Save selected to Missing Case Details</>
+                    <>💾 Save {selectedCount > 0 ? `${selectedCount} ` : ''}to Missing Case Details</>
                   )}
                 </button>
               </div>
