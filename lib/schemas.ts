@@ -141,6 +141,7 @@ export const TRANSCRIPT_ANALYSIS_SCHEMA = {
         type: 'object',
         additionalProperties: false,
         required: [
+          'transcriptIndices',
           'caseId',
           'question',
           'frequency',
@@ -151,9 +152,17 @@ export const TRANSCRIPT_ANALYSIS_SCHEMA = {
           'botResponse',
         ],
         properties: {
+          transcriptIndices: {
+            type: 'array',
+            description:
+              'The 1-based indices (matching "idx" attribute of the <transcript> tags) of every transcript in this batch that contributed to this finding. The server uses these to look up the real CaseID — getting them right is critical.',
+            items: { type: 'integer', minimum: 1 },
+            minItems: 1,
+          },
           caseId: {
             type: 'string',
-            description: 'The CaseID this question was asked about. Copy from the transcript header.',
+            description:
+              'Copy the EXACT value of the "id" attribute from the <transcript> tag containing the deflection. Must match the id of every transcript listed in transcriptIndices (all transcriptIndices in one finding must belong to the same case). The server will overwrite this with the authoritative value — but if you put the wrong one here, your transcriptIndices are probably wrong too.',
           },
           question: {
             type: 'string',

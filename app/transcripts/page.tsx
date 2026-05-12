@@ -20,6 +20,8 @@ interface Finding {
   suggestedAddition: string
   exampleQuotes: string
   botResponse: string
+  // Server-attached for diagnostics; may be missing on legacy responses.
+  transcriptIndices?: number[]
 }
 
 type RunState =

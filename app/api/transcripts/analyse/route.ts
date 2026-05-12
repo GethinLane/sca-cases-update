@@ -17,12 +17,30 @@ const SYSTEM_PROMPT = `You are a quality reviewer for an MRCGP SCA medical-rolep
 ═══════════════════════════════════════════════════════════════════════
 TRANSCRIPT FORMAT — READ THIS FIRST OR YOU WILL GET ROLES BACKWARDS
 ═══════════════════════════════════════════════════════════════════════
-Every transcript is a turn-by-turn conversation with these EXACT prefixes:
+Each transcript in the input is wrapped in an XML tag:
 
+  <transcript idx="N" id="CASE_ID">
+  User: ...
+  Assistant: ...
+  </transcript>
+
+  • idx = its 1-based position in the batch (use this for "transcriptIndices" in your output).
+  • id  = the CaseID that transcript belongs to (use this for "caseId" — but the server will also overwrite it from idx, so the indices MUST be correct).
+
+INSIDE each transcript:
   "User:"       → the CANDIDATE (the doctor). They take a history, ask questions, give advice.
   "Assistant:"  → the BOT (the patient). They answer as the patient.
 
 This is the OPPOSITE of how it might read at first glance. "User" is NOT the patient — it is the candidate/doctor. "Assistant" is the patient/bot.
+
+═══════════════════════════════════════════════════════════════════════
+CASE-ID ATTRIBUTION — DO NOT GUESS, DO NOT MIX TRANSCRIPTS
+═══════════════════════════════════════════════════════════════════════
+Every finding MUST list the exact idx values of the transcript(s) the deflection appeared in. If you list idx=5, the server WILL set caseId from that transcript's id attribute. So:
+
+  • Only list an idx if you actually saw the deflection inside that <transcript> tag.
+  • All idx values in one finding MUST share the same id (= same CaseID). If a question recurs across cases, emit SEPARATE findings — one per case.
+  • Never copy a CaseID from a different transcript. Never invent a CaseID.
 
 ═══════════════════════════════════════════════════════════════════════
 WHAT YOU ARE LOOKING FOR
@@ -155,26 +173,89 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Max 50 transcripts per batch' }, { status: 400 })
   }
 
-  // Build the user prompt: clearly delimit each transcript with its CaseID so
-  // the model can attribute findings correctly.
+  // Wrap each transcript in an explicit <transcript> tag with idx + id
+  // attributes. The model echoes the idx values back in transcriptIndices,
+  // which we then use as the authoritative source for caseId — so a model
+  // hallucination on caseId can't reach Airtable.
   const blocks = transcripts.map((t, i) => {
+    const idx = i + 1
     const body = (t.transcript ?? '').slice(0, 12000)
-    return `═══ TRANSCRIPT ${i + 1} of ${transcripts.length} ═══
-CaseID: ${t.caseId || '(unknown)'}
-${t.createdAt ? `CreatedAt: ${t.createdAt}` : ''}
-
-${body}`
+    return `<transcript idx="${idx}" id="${(t.caseId || 'unknown').replace(/"/g, '&quot;')}"${t.createdAt ? ` createdAt="${t.createdAt}"` : ''}>
+${body}
+</transcript>`
   })
 
-  const userPrompt = `Analyse the following ${transcripts.length} transcripts. For each recurring patient question the bot deflected on, emit one finding per case.
+  const userPrompt = `Analyse the following ${transcripts.length} transcripts. Each is wrapped in a <transcript> tag whose "idx" attribute is its 1-based position in this batch and whose "id" attribute is the CaseID it belongs to.
+
+For every finding you emit:
+  • transcriptIndices = list every idx that contains the deflection (1-based).
+  • caseId            = the id attribute of those transcripts (they MUST all share the same id; if they don't, you're grouping across cases — split them).
 
 ${blocks.join('\n\n')}`
 
   try {
     const { parsed, model } = await callOpenAI(SYSTEM_PROMPT, userPrompt)
+    const rawFindings: any[] = Array.isArray(parsed?.findings) ? parsed.findings : []
+
+    // Build the authoritative idx → caseId map from what we actually sent to
+    // the model. This is the ONLY source of truth for caseId from here on.
+    const idxToCaseId = new Map<number, string>()
+    transcripts.forEach((t, i) => idxToCaseId.set(i + 1, t.caseId))
+
+    const correctedFindings: any[] = []
+    let overrideCount = 0
+    let droppedCount = 0
+
+    for (const f of rawFindings) {
+      const indices: number[] = Array.isArray(f.transcriptIndices) ? f.transcriptIndices : []
+      const realCaseIds = indices
+        .map(i => idxToCaseId.get(i))
+        .filter((v): v is string => typeof v === 'string' && v.length > 0)
+
+      if (realCaseIds.length === 0) {
+        // Model didn't tell us which transcript this came from — we can't
+        // trust the caseId. Drop the finding rather than risk mis-attribution.
+        console.warn('[transcripts/analyse] dropping finding with no valid transcriptIndices', {
+          modelCaseId: f.caseId,
+          indices,
+        })
+        droppedCount++
+        continue
+      }
+
+      const uniqueCaseIds = Array.from(new Set(realCaseIds))
+      if (uniqueCaseIds.length > 1) {
+        // Model violated "one finding per case" — fan it out into one finding
+        // per case to keep attribution honest.
+        for (const cid of uniqueCaseIds) {
+          const matchingIndices = indices.filter(i => idxToCaseId.get(i) === cid)
+          correctedFindings.push({ ...f, caseId: cid, transcriptIndices: matchingIndices })
+        }
+        overrideCount++
+        continue
+      }
+
+      const realCaseId = uniqueCaseIds[0]
+      if (f.caseId !== realCaseId) {
+        console.warn('[transcripts/analyse] overriding hallucinated caseId', {
+          modelSaid: f.caseId,
+          actual: realCaseId,
+          indices,
+        })
+        overrideCount++
+      }
+      correctedFindings.push({ ...f, caseId: realCaseId })
+    }
+
     return NextResponse.json({
-      findings: parsed.findings ?? [],
-      _meta: { model, batchSize: transcripts.length },
+      findings: correctedFindings,
+      _meta: {
+        model,
+        batchSize: transcripts.length,
+        rawFindings: rawFindings.length,
+        overrideCount,
+        droppedCount,
+      },
     })
   } catch (err: any) {
     console.error('transcripts/analyse error:', err.message)
