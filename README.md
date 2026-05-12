@@ -13,13 +13,12 @@ A Next.js dashboard that pulls user-submitted corrections from your Airtable fee
 npm install
 ```
 
-### 3. Create your Airtable token
-- Go to https://airtable.com/create/tokens
-- Create a token with these scopes:
-  - `data.records:read`
-  - `data.records:write` (required for Transcript Insights → "Missing Case Details" writes)
-  - `schema.bases:read`
-- Add access to all three bases: Cases base, Feedback base, and Transcripts ("Users ai") base
+### 3. Create your Airtable tokens
+You need two personal-access tokens at https://airtable.com/create/tokens:
+
+**Read token (`AIRTABLE_TOKEN`)** — scopes: `data.records:read`, `schema.bases:read`. Grant access to all three bases: Cases, Feedback, and "Users ai" (Transcripts).
+
+**Feedback write token (`AIRTABLE_FEEDBACK_WRITE_TOKEN`)** — scopes: `data.records:write`. Grant access to the Feedback base only. This is kept separate because the main read token is shared with other tools and intentionally read-only.
 
 ### 4. Find your Base IDs
 - Open your Airtable base in the browser
@@ -33,11 +32,11 @@ cp .env.example .env.local
 ```
 Then edit `.env.local` and fill in:
 ```
-AIRTABLE_TOKEN=pat...                 # Default token (Cases base + Feedback base)
+AIRTABLE_TOKEN=pat...                 # Read-only token covering Cases, Feedback, and Users ai bases
 AIRTABLE_FEEDBACK_BASE_ID=app...
 AIRTABLE_CASES_BASE_ID=app...
 AIRTABLE_TRANSCRIPTS_BASE_ID=app...   # "Users ai" base — only needed for Transcript Insights
-AIRTABLE_TRANSCRIPTS_TOKEN=pat...     # Separate token for the "Users ai" base (falls back to AIRTABLE_TOKEN if unset)
+AIRTABLE_FEEDBACK_WRITE_TOKEN=pat...  # Write-scoped token for the feedback base (used only when saving to "Missing Case Details")
 OPENAI_API_KEY=sk-...                 # Required for Transcript Insights (uses gpt-5.4-mini)
 ```
 
@@ -54,11 +53,11 @@ Open http://localhost:3000
 1. Push this project to a GitHub repo
 2. Go to https://vercel.com and import the repo
 3. In Vercel project settings → Environment Variables, add the same variables:
-   - `AIRTABLE_TOKEN`
+   - `AIRTABLE_TOKEN` (read scope, covers all three bases)
    - `AIRTABLE_FEEDBACK_BASE_ID`
    - `AIRTABLE_CASES_BASE_ID`
    - `AIRTABLE_TRANSCRIPTS_BASE_ID` (for Transcript Insights)
-   - `AIRTABLE_TRANSCRIPTS_TOKEN` (separate token for the "Users ai" base; optional — falls back to `AIRTABLE_TOKEN`)
+   - `AIRTABLE_FEEDBACK_WRITE_TOKEN` (separate write-scoped token for the feedback base — required to save Missing Case Details)
    - `OPENAI_API_KEY` (for Transcript Insights)
 4. Deploy — done!
 
