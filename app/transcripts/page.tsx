@@ -216,9 +216,10 @@ export default function TranscriptsPage() {
           text: `Saved ${data.created ?? '?'} row${data.created === 1 ? '' : 's'} to Missing Case Details.`,
         })
       } else if (res.status === 207) {
+        const firstErr = data.errors?.[0] ?? 'unknown'
         setSaveResult({
           kind: 'err',
-          text: `Partial save: ${data.created} succeeded, ${data.errors?.length ?? 0} failed. First error: ${data.errors?.[0] ?? 'unknown'}`,
+          text: `Airtable rejected the write — saved ${data.created ?? 0}, failed ${data.errors?.length ?? 0} batch(es). First error from Airtable: ${firstErr}`,
         })
       } else if (res.status === 401 || res.status === 403) {
         setSaveResult({
@@ -438,6 +439,14 @@ export default function TranscriptsPage() {
                 </table>
               </div>
 
+              {saveResult && (
+                <div
+                  className={saveResult.kind === 'ok' ? styles.successBox : styles.errorBox}
+                  style={{ margin: '0 20px', borderRadius: 0 }}
+                >
+                  {saveResult.text}
+                </div>
+              )}
               <div className={styles.footerBar}>
                 <span className={styles.selectedCount}>
                   {selectedCount === 0
