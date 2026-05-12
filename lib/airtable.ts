@@ -169,6 +169,7 @@ export interface MissingDetailRecord {
   relevanceReason: string
   suggestedAddition: string
   exampleQuotes: string
+  botResponse: string
   analysedDate: string
 }
 
@@ -200,6 +201,7 @@ export async function saveMissingCaseDetails(
         'Relevance Reason': r.relevanceReason,
         'Suggested Addition': r.suggestedAddition,
         'Example Quotes': r.exampleQuotes,
+        'Bot Response': r.botResponse,
         'Analysed Date': r.analysedDate,
       },
     }))
