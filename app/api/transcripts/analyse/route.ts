@@ -28,7 +28,12 @@ DETECTION
 - Read every bot turn for hedges, deflections, refusals, or admissions of not knowing.
 - For each one, identify the question the candidate had just asked.
 - Normalise to a clean canonical phrasing (e.g. "Does she take her inhaler regularly?" — not the verbatim quote).
-- Group equivalent paraphrases of the same question across transcripts into ONE finding and set frequency = number of transcripts it appeared in.
+- Capture the bot's actual deflection wording verbatim — this matters for the case author to see HOW the bot avoided the question.
+
+ONE FINDING PER QUESTION-PER-CASE — THIS IS A HARD RULE
+- Group transcripts by CaseID first. Then within each case, group equivalent paraphrases of the same question into ONE finding.
+- The "frequency" field is the count WITHIN THAT CaseID ONLY — i.e. how many transcripts whose CaseID matches the caseId field contained this deflected question.
+- If the same question shows up across multiple cases (e.g. CaseID 7 and CaseID 12), emit TWO findings (one per case), each with its own per-case frequency. NEVER sum across cases.
 
 CLINICAL RELEVANCE (this is the important judgement call)
 - Yes  → knowing the answer would plausibly change history-taking, diagnosis, differential, risk assessment, management, or safety-netting for this case.
@@ -38,7 +43,10 @@ For Yes findings, also write a "suggestedAddition" — a copy/paste-ready senten
 
 For No findings, leave suggestedAddition as an empty string.
 
-ONE FINDING PER QUESTION-PER-CASE. If the same question recurs across cases, emit one finding per case (with the relevant caseId), not a merged super-finding.
+EXAMPLE QUOTES vs BOT RESPONSE
+- "exampleQuotes" → up to 3 USER (candidate) quotes that asked the question.
+- "botResponse"   → up to 3 BOT (patient) replies showing the deflection.
+Both are " | " separated.
 
 OUTPUT
 Return a single JSON object matching the schema. If nothing in this batch triggered any bot hedges, return { "findings": [] }.`

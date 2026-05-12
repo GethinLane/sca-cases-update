@@ -100,11 +100,12 @@ Scans a day of bot conversations for recurring patient questions where the bot h
 **Output — Feedback base, "Missing Case Details" table (create this manually with these exact column names):**
 - `CaseID` — single line text
 - `Question` — long text
-- `Frequency` — number (integer)
+- `Frequency` — number (integer) — times this question was asked & deflected *within this case* (not across all cases)
 - `Clinically Relevant` — single select (`Yes` / `No`) or single line text
 - `Relevance Reason` — long text
 - `Suggested Addition` — long text
-- `Example Quotes` — long text
+- `Example Quotes` — long text — verbatim candidate (user) quotes
+- `Bot Response` — long text — verbatim bot deflection wording
 - `Analysed Date` — date
 
 **How it works:**

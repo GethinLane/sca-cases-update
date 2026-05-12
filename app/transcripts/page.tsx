@@ -19,6 +19,7 @@ interface Finding {
   relevanceReason: string
   suggestedAddition: string
   exampleQuotes: string
+  botResponse: string
 }
 
 type RunState =
@@ -73,6 +74,11 @@ function mergeFindings(all: Finding[]): Finding[] {
         existing.exampleQuotes = `${existing.exampleQuotes} | ${f.exampleQuotes}`.slice(0, 1000)
       } else if (!existing.exampleQuotes) {
         existing.exampleQuotes = f.exampleQuotes
+      }
+      if (existing.botResponse && f.botResponse && existing.botResponse !== f.botResponse) {
+        existing.botResponse = `${existing.botResponse} | ${f.botResponse}`.slice(0, 1000)
+      } else if (!existing.botResponse) {
+        existing.botResponse = f.botResponse
       }
       // If either batch said Yes, lean Yes — the case author can still un-tick it
       if (f.clinicallyRelevant === 'Yes') existing.clinicallyRelevant = 'Yes'
@@ -183,6 +189,7 @@ export default function TranscriptsPage() {
         relevanceReason: f.relevanceReason,
         suggestedAddition: f.suggestedAddition,
         exampleQuotes: f.exampleQuotes,
+        botResponse: f.botResponse,
         analysedDate: date,
       }))
 
@@ -383,7 +390,7 @@ export default function TranscriptsPage() {
                       </th>
                       <th className={styles.colCase}>Case</th>
                       <th>Question</th>
-                      <th className={styles.colFreq}>Freq</th>
+                      <th className={styles.colFreq} title="Times asked & deflected within this case">Freq (in case)</th>
                       <th className={styles.colRel}>Clinically rel.</th>
                       <th>Suggested addition</th>
                     </tr>
@@ -427,8 +434,10 @@ export default function TranscriptsPage() {
                               <td colSpan={6}>
                                 <div className={styles.expandedLabel}>Relevance reason</div>
                                 <p className={styles.expandedBody}>{f.relevanceReason || '—'}</p>
-                                <div className={styles.expandedLabel}>Example quotes</div>
+                                <div className={styles.expandedLabel}>Candidate quotes (the question asked)</div>
                                 <p className={styles.expandedBody}>{f.exampleQuotes || '—'}</p>
+                                <div className={styles.expandedLabel}>Bot's deflection</div>
+                                <p className={styles.expandedBody}>{f.botResponse || '—'}</p>
                               </td>
                             </tr>
                           )}

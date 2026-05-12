@@ -148,6 +148,7 @@ export const TRANSCRIPT_ANALYSIS_SCHEMA = {
           'relevanceReason',
           'suggestedAddition',
           'exampleQuotes',
+          'botResponse',
         ],
         properties: {
           caseId: {
@@ -162,7 +163,8 @@ export const TRANSCRIPT_ANALYSIS_SCHEMA = {
           frequency: {
             type: 'integer',
             minimum: 1,
-            description: 'How many separate transcripts in this batch contained this question (or a clear paraphrase).',
+            description:
+              'How many times THIS specific question (or a clear paraphrase) was asked AND triggered a bot deflection FOR THIS caseId in this batch. Scope = transcripts whose CaseID matches the caseId field. Do NOT count occurrences from other cases — emit a separate finding per case if the question recurs across cases.',
           },
           clinicallyRelevant: {
             type: 'string',
@@ -183,7 +185,12 @@ export const TRANSCRIPT_ANALYSIS_SCHEMA = {
           exampleQuotes: {
             type: 'string',
             description:
-              'Up to 3 short verbatim user quotes from transcripts that triggered the bot hedge, separated by " | ".',
+              'Up to 3 short verbatim USER (candidate) quotes from transcripts that triggered the bot hedge, separated by " | ".',
+          },
+          botResponse: {
+            type: 'string',
+            description:
+              'Up to 3 short verbatim BOT (patient) responses showing how it deflected — e.g. "I\'m not sure", "I don\'t know if that matters", "That\'s not in my notes". Separated by " | ".',
           },
         },
       },
