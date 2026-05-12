@@ -6,10 +6,12 @@ const FEEDBACK_BASE_ID = process.env.AIRTABLE_FEEDBACK_BASE_ID!
 const CASES_BASE_ID = process.env.AIRTABLE_CASES_BASE_ID!
 const TRANSCRIPTS_BASE_ID = process.env.AIRTABLE_TRANSCRIPTS_BASE_ID!
 const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN!
-// Optional: the "Users ai" base uses its own personal-access token. Falls back
-// to the main token if not set so older deployments keep working.
-const AIRTABLE_TRANSCRIPTS_TOKEN =
-  process.env.AIRTABLE_TRANSCRIPTS_TOKEN || process.env.AIRTABLE_TOKEN!
+// The default AIRTABLE_TOKEN is read-only because it's shared with other tools.
+// Writes to the feedback base (e.g. Missing Case Details) need a separate
+// write-scoped token. Falls back to AIRTABLE_TOKEN so dev setups still work
+// if both happen to be on the same token.
+const AIRTABLE_FEEDBACK_WRITE_TOKEN =
+  process.env.AIRTABLE_FEEDBACK_WRITE_TOKEN || process.env.AIRTABLE_TOKEN!
 
 const AT_BASE = 'https://api.airtable.com/v0'
 
@@ -139,7 +141,7 @@ export async function getTranscriptsForDate(
     if (offset) params.push(`offset=${encodeURIComponent(offset)}`)
 
     const url = `${AT_BASE}/${TRANSCRIPTS_BASE_ID}/${encodedTable}?${params.join('&')}`
-    const data = await airtableFetch(url, AIRTABLE_TRANSCRIPTS_TOKEN)
+    const data = await airtableFetch(url)
 
     for (const r of data.records || []) {
       rows.push({
@@ -203,7 +205,11 @@ export async function saveMissingCaseDetails(
     }))
 
     try {
-      const res = await airtablePost(url, { records: chunk, typecast: true })
+      const res = await airtablePost(
+        url,
+        { records: chunk, typecast: true },
+        AIRTABLE_FEEDBACK_WRITE_TOKEN,
+      )
       created += (res.records || []).length
     } catch (err: any) {
       errors.push(err.message ?? String(err))
