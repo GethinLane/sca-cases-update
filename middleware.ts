@@ -16,6 +16,15 @@ export function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
+  // API callers expect JSON — returning an HTML login redirect breaks
+  // `await res.json()` on the client with "Unexpected token '<'".
+  if (pathname.startsWith('/api/')) {
+    return NextResponse.json(
+      { error: 'Session expired — please refresh the page and sign in again.' },
+      { status: 401 },
+    )
+  }
+
   // Otherwise redirect to login
   const loginUrl = req.nextUrl.clone()
   loginUrl.pathname = '/login'

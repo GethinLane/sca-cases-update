@@ -74,6 +74,37 @@ function urlDomain(url: string): string {
   }
 }
 
+/**
+ * Parse a fetch Response that is expected to be JSON. If the server returns
+ * HTML (auth redirect, platform timeout page, crash page) the raw JSON parser
+ * throws "Unexpected token '<'", which is useless to the user. This wrapper
+ * surfaces the actual situation instead.
+ */
+async function readJsonResponse(res: Response): Promise<any> {
+  const text = await res.text()
+  const contentType = res.headers.get('content-type') ?? ''
+  const looksLikeHtml = text.trimStart().startsWith('<')
+
+  if (looksLikeHtml || !contentType.includes('application/json')) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('Session expired — please refresh the page and sign in again.')
+    }
+    if (res.status === 504 || res.status === 408) {
+      throw new Error('The analysis took too long and the server timed out before it finished. Try again, and consider lowering ANALYSE_MAX_SEARCHES or using a faster model.')
+    }
+    if (res.status >= 500) {
+      throw new Error(`Server error (${res.status}). The analyse endpoint returned an HTML page instead of JSON. Check the server logs.`)
+    }
+    throw new Error(`Unexpected non-JSON response (${res.status}). The endpoint may have redirected or crashed.`)
+  }
+
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`Server returned malformed JSON (${res.status}).`)
+  }
+}
+
 export default function Dashboard() {
   const [items, setItems] = useState<FeedbackItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -87,7 +118,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetch('/api/fetch-feedback')
-      .then(r => r.json())
+      .then(readJsonResponse)
       .then(d => {
         if (d.error) throw new Error(d.error)
         setItems(d.items)
@@ -110,7 +141,7 @@ export default function Dashboard() {
           extraContext: extraContext[key] ?? '',
         }),
       })
-      const data = await res.json()
+      const data = await readJsonResponse(res)
       if (data.error) throw new Error(data.error)
       setAnalyses(a => ({ ...a, [key]: { status: 'done', data } }))
     } catch (e: any) {
