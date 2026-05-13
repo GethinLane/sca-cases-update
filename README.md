@@ -37,7 +37,7 @@ AIRTABLE_FEEDBACK_BASE_ID=app...
 AIRTABLE_CASES_BASE_ID=app...
 AIRTABLE_TRANSCRIPTS_BASE_ID=app...   # "Users ai" base — only needed for Transcript Insights
 AIRTABLE_FEEDBACK_WRITE_TOKEN=pat...  # Write-scoped token for the feedback base (used only when saving to "Missing Case Details")
-OPENAI_API_KEY=sk-...                 # Required for Transcript Insights (uses gpt-5.4-mini)
+OPENAI_API_KEY=sk-...                 # Required for Transcript Insights (uses gpt-5.4)
 ```
 
 ### 6. Run locally
@@ -110,10 +110,10 @@ Scans a day of bot conversations for recurring patient questions where the bot h
 
 **How it works:**
 1. Pick a date → `/api/transcripts/fetch` pulls up to 300 rows from "Attempts" where `CreatedAt` is that day.
-2. The client batches them 50 at a time and calls `/api/transcripts/analyse`, which sends each batch to `gpt-5.4-mini` with a strict JSON schema asking for: question, frequency, clinical relevance, suggested addition, example quotes.
+2. The client batches them 50 at a time and calls `/api/transcripts/analyse`, which sends each batch to `gpt-5.4` with a strict JSON schema asking for: question, frequency, clinical relevance, suggested addition, example quotes.
 3. Findings from all batches are merged client-side (deduped by case + normalised question).
 4. Clinically relevant rows are pre-ticked; click "Save selected" to write to "Missing Case Details" via `/api/transcripts/save`.
 
 **Optional env overrides:**
-- `TRANSCRIPTS_OPENAI_MODEL` — default `gpt-5.4-mini`
+- `TRANSCRIPTS_OPENAI_MODEL` — default `gpt-5.4`
 - `OPENAI_TRANSCRIPTS_EFFORT` — default `medium` (set `low` for speed, `high` for tougher cases)

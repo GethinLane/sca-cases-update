@@ -141,7 +141,7 @@ async function callOpenAI(systemPrompt: string, userPrompt: string) {
 
   const model = process.env.TRANSCRIPTS_OPENAI_MODEL
     ?? process.env.TRIAGE_OPENAI_MODEL
-    ?? 'gpt-5.4-mini'
+    ?? 'gpt-5.4'
   const effort = process.env.OPENAI_TRANSCRIPTS_EFFORT ?? 'medium'
 
   const response = await fetch('https://api.openai.com/v1/responses', {
