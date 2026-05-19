@@ -14,11 +14,13 @@ npm install
 ```
 
 ### 3. Create your Airtable tokens
-You need two personal-access tokens at https://airtable.com/create/tokens:
+You need three personal-access tokens at https://airtable.com/create/tokens:
 
 **Read token (`AIRTABLE_TOKEN`)** — scopes: `data.records:read`, `schema.bases:read`. Grant access to all three bases: Cases, Feedback, and "Users ai" (Transcripts).
 
 **Feedback write token (`AIRTABLE_FEEDBACK_WRITE_TOKEN`)** — scopes: `data.records:write`. Grant access to the Feedback base only. This is kept separate because the main read token is shared with other tools and intentionally read-only.
+
+**Cases write token (`AIRTABLE_CASES_WRITE_TOKEN`)** — scopes: `data.records:write`. Grant access to the Cases base only. Used by the two-stage feedback flow's "Update Airtable" button when the reviewer accepts a per-cell rewrite suggestion. Kept narrowly scoped so a leak only exposes the Cases base.
 
 ### 4. Find your Base IDs
 - Open your Airtable base in the browser
@@ -37,7 +39,10 @@ AIRTABLE_FEEDBACK_BASE_ID=app...
 AIRTABLE_CASES_BASE_ID=app...
 AIRTABLE_TRANSCRIPTS_BASE_ID=app...   # "Users ai" base — only needed for Transcript Insights
 AIRTABLE_FEEDBACK_WRITE_TOKEN=pat...  # Write-scoped token for the feedback base (used only when saving to "Missing Case Details")
+AIRTABLE_CASES_WRITE_TOKEN=pat...     # Write-scoped token for the Cases base (used by /api/apply-edit)
+ANTHROPIC_API_KEY=sk-ant-...          # Used by feedback triage (Sonnet) and draft rewrites (Opus)
 OPENAI_API_KEY=sk-...                 # Required for Transcript Insights (uses gpt-5.4)
+BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...   # Vercel Blob — caches Stage 1 + Stage 2 results
 ```
 
 ### 6. Run locally
@@ -58,20 +63,33 @@ Open http://localhost:3000
    - `AIRTABLE_CASES_BASE_ID`
    - `AIRTABLE_TRANSCRIPTS_BASE_ID` (for Transcript Insights)
    - `AIRTABLE_FEEDBACK_WRITE_TOKEN` (separate write-scoped token for the feedback base — required to save Missing Case Details)
+   - `AIRTABLE_CASES_WRITE_TOKEN` (write-scoped token for the Cases base — required for the per-cell Apply Airtable updates)
+   - `ANTHROPIC_API_KEY` (for triage + draft-rewrite endpoints)
    - `OPENAI_API_KEY` (for Transcript Insights)
+   - `BLOB_READ_WRITE_TOKEN` (Vercel Blob — caches Stage 1 and Stage 2 results)
 4. Deploy — done!
 
 ---
 
-## How it works
+## How it works — the two-stage feedback flow
 
-1. Dashboard loads → calls `/api/fetch-feedback` → fetches all rows from your "User Feedback" table and joins each to its case data from the Cases base
-2. You click "Analyse" on any submission → calls `/api/analyse-case` → Claude reads the full case content + the feedback, searches the web for relevant NICE/RCGP/BNF guidance, and returns:
+1. **Dashboard loads** → calls `/api/fetch-feedback` → fetches all rows from your "User Feedback" table and joins each to its case data from the Cases base.
+2. **Stage 1 — Triage** (button: *Check feedback*) → calls `/api/feedback-triage` → Sonnet 4.6 reads the full case (preserving Airtable record identity), verifies the feedback against current UK guidelines via web search, and returns:
    - A verdict (valid / invalid / partial / uncertain)
    - A plain-English summary
-   - Field-by-field suggested changes with before/after text
+   - A list of **flagged cells** — `(recordId, fieldName)` pairs that need review
    - A draft email response (if the submitter requested contact)
-3. You review the suggestions and manually make any changes in Airtable
+
+   The triage is cached to Vercel Blob keyed by feedback ID, along with a snapshot of the case content Stage 1 reasoned over.
+3. **Stage 2 — Rewrites** (button: *Generate rewrites*, scope toggle: *Flagged only* / *Whole case*) → calls `/api/draft-rewrites` → Opus 4.7 re-fetches fresh case data from Airtable, then drafts a drop-in replacement for each target cell. Returns per-cell:
+   - `currentText` (verbatim, used for conflict detection)
+   - `suggestedText` (the new value, copy-paste-ready)
+   - `rationale`, `confidence`, optional `sourceUrl`
+4. **Stage 3 — Apply** (button: *Update Airtable* per card) → calls `/api/apply-edit` → before writing, the endpoint re-fetches the live Airtable value. If it has changed since Stage 2, the write is refused with HTTP 409 and the live value is surfaced to the UI so the reviewer can decide what to do. Otherwise the single field on the single Airtable record is PATCHed via `AIRTABLE_CASES_WRITE_TOKEN`.
+
+The reviewer can edit any `suggestedText` inline in the textarea before clicking Update Airtable. Applied rewrites are persisted with a timestamp so reopening the same feedback restores state.
+
+The previous one-shot endpoint `/api/analyse-case` is deprecated but left in place for one release as a fallback.
 
 ---
 

@@ -15,6 +15,22 @@ const AIRTABLE_FEEDBACK_WRITE_TOKEN =
 
 const AT_BASE = 'https://api.airtable.com/v0'
 
+async function airtablePatch(url: string, body: unknown, token: string) {
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Airtable error ${res.status}: ${text}`)
+  }
+  return res.json()
+}
+
 async function airtableFetch(url: string, token: string = AIRTABLE_TOKEN) {
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
@@ -90,6 +106,138 @@ export async function getCaseData(caseNumber: string): Promise<CaseData | null> 
       }
     }
     return { caseNumber, fields: merged }
+  } catch {
+    return null
+  }
+}
+
+// ─── Structured (row-preserving) case data ─────────────────────────
+// Used by the two-stage feedback analysis flow, which needs to write
+// back to individual records. getCaseData() merges rows and destroys
+// recordId — fine for prose analysis, but not for per-cell PATCH.
+
+export interface CaseRowCell {
+  recordId: string
+  fieldName: string
+  value: string
+}
+
+export interface CaseDataStructured {
+  caseNumber: string
+  tableName: string
+  records: Array<{
+    recordId: string
+    rowIndex: number
+    fields: Record<string, string>
+  }>
+}
+
+const AIRTABLE_CASES_WRITE_TOKEN_ENV = 'AIRTABLE_CASES_WRITE_TOKEN'
+
+function getCasesWriteToken(): string {
+  const token = process.env.AIRTABLE_CASES_WRITE_TOKEN
+  if (!token) {
+    throw new Error(
+      `${AIRTABLE_CASES_WRITE_TOKEN_ENV} is not set. ` +
+      `Create a write-scoped Airtable personal access token for the Cases base ` +
+      `(scopes: data.records:write on Cases base only) at https://airtable.com/create/tokens ` +
+      `and add it as ${AIRTABLE_CASES_WRITE_TOKEN_ENV}.`,
+    )
+  }
+  return token
+}
+
+export async function getCaseDataStructured(
+  caseNumber: string,
+): Promise<CaseDataStructured | null> {
+  const tableName = `Case ${caseNumber}`
+  const encoded = encodeURIComponent(tableName)
+
+  try {
+    const records: CaseDataStructured['records'] = []
+    let offset: string | undefined
+    let rowIndex = 0
+
+    do {
+      const params: string[] = ['pageSize=100']
+      if (offset) params.push(`offset=${encodeURIComponent(offset)}`)
+      const url = `${AT_BASE}/${CASES_BASE_ID}/${encoded}?${params.join('&')}`
+      const data = await airtableFetch(url)
+
+      for (const record of data.records || []) {
+        const fields: Record<string, string> = {}
+        for (const [key, value] of Object.entries(record.fields as Record<string, unknown>)) {
+          if (typeof value === 'string') {
+            fields[key] = value
+          } else if (value != null) {
+            fields[key] = String(value)
+          }
+        }
+        records.push({
+          recordId: record.id,
+          rowIndex,
+          fields,
+        })
+        rowIndex++
+      }
+
+      offset = data.offset
+    } while (offset)
+
+    if (records.length === 0) return null
+
+    return { caseNumber, tableName, records }
+  } catch {
+    return null
+  }
+}
+
+export async function updateCaseField(
+  caseNumber: string,
+  recordId: string,
+  fieldName: string,
+  newValue: string,
+): Promise<void> {
+  const token = getCasesWriteToken()
+  const tableName = `Case ${caseNumber}`
+  const encoded = encodeURIComponent(tableName)
+  const url = `${AT_BASE}/${CASES_BASE_ID}/${encoded}/${recordId}`
+  // typecast: false — surface schema mismatches loudly rather than coercing silently.
+  await airtablePatch(url, { fields: { [fieldName]: newValue }, typecast: false }, token)
+}
+
+export async function getCaseFieldValue(
+  caseNumber: string,
+  recordId: string,
+  fieldName: string,
+): Promise<string | null> {
+  const tableName = `Case ${caseNumber}`
+  const encoded = encodeURIComponent(tableName)
+  const url = `${AT_BASE}/${CASES_BASE_ID}/${encoded}/${recordId}`
+  try {
+    const data = await airtableFetch(url)
+    const raw = (data.fields as Record<string, unknown> | undefined)?.[fieldName]
+    if (raw == null) return null
+    return typeof raw === 'string' ? raw : String(raw)
+  } catch {
+    return null
+  }
+}
+
+export async function getFeedbackById(feedbackId: string): Promise<FeedbackRow | null> {
+  const encoded = encodeURIComponent('User Feedback')
+  const url = `${AT_BASE}/${FEEDBACK_BASE_ID}/${encoded}/${feedbackId}`
+  try {
+    const r = await airtableFetch(url)
+    return {
+      id: r.id,
+      caseNumber: String(r.fields['Case'] ?? '').trim(),
+      issueSummary: r.fields['Issue Summary'] ?? '',
+      contactRegardingOutcome:
+        r.fields['Contact regarding outcome'] === true ||
+        r.fields['Contact regarding outcome'] === 'Yes',
+      contactEmail: r.fields['Contact Email'] ?? '',
+    }
   } catch {
     return null
   }

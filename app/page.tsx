@@ -18,14 +18,6 @@ interface FeedbackItem {
   } | null
 }
 
-interface FieldChange {
-  fieldName: string
-  currentText: string
-  issue: string
-  suggestedText: string
-  confidence: 'high' | 'medium' | 'low'
-}
-
 interface SourceEntry {
   title: string
   url: string
@@ -41,31 +33,65 @@ interface Verification {
   niceUrls: string[]
 }
 
-interface Analysis {
-  verdict: 'valid' | 'invalid' | 'partial' | 'uncertain'
-  verdictReason: string
+interface FlaggedCell {
+  recordId: string
+  fieldName: string
+  rowIndex: number
+  issue: string
+  severity: 'high' | 'medium' | 'low'
+}
+
+interface TriageResult {
   caseScenario?: string
   summary: string
-  sources: SourceEntry[] | string[]
-  fieldChanges: FieldChange[]
+  sources: SourceEntry[]
+  verdict: 'valid' | 'invalid' | 'partial' | 'uncertain'
+  verdictReason: string
+  flaggedCells: FlaggedCell[]
   emailResponse: string
   _verification?: Verification
-  // Legacy field — kept for backwards compatibility
-  searchActivity?: { query: string; urls: string[]; niceCksHit: boolean }[]
+  _meta?: { provider: string; model: string; searchCount: number }
 }
 
-type AnalysisState =
+interface RewriteEntry {
+  recordId: string
+  fieldName: string
+  rowIndex: number
+  currentText: string
+  suggestedText: string
+  rationale: string
+  confidence: 'high' | 'medium' | 'low'
+  sourceUrl?: string
+  appliedAt?: string
+}
+
+interface RewritesResult {
+  feedbackId: string
+  scope: 'flagged-only' | 'whole-case'
+  rewrites: RewriteEntry[]
+  changedSinceTriage?: Array<{ recordId: string; fieldName: string }>
+  _meta?: { provider: string; model: string; searchCount: number; targetCount: number; citedUrls?: string[] }
+}
+
+type TriageState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'done'; data: Analysis }
+  | { status: 'done'; data: TriageResult }
   | { status: 'error'; message: string }
 
-/** Check if sources array contains the new object format */
-function isStructuredSources(sources: any[]): sources is SourceEntry[] {
-  return sources.length > 0 && typeof sources[0] === 'object' && 'url' in sources[0]
-}
+type RewritesState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'done'; data: RewritesResult }
+  | { status: 'error'; message: string }
 
-/** Highlight domain in a URL for quick scanning */
+type ApplyState =
+  | { status: 'idle' }
+  | { status: 'applying' }
+  | { status: 'applied'; appliedAt: string }
+  | { status: 'conflict'; actual: string | null; expected: string }
+  | { status: 'error'; message: string }
+
 function urlDomain(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, '')
@@ -74,12 +100,6 @@ function urlDomain(url: string): string {
   }
 }
 
-/**
- * Parse a fetch Response that is expected to be JSON. If the server returns
- * HTML (auth redirect, platform timeout page, crash page) the raw JSON parser
- * throws "Unexpected token '<'", which is useless to the user. This wrapper
- * surfaces the actual situation instead.
- */
 async function readJsonResponse(res: Response): Promise<any> {
   const text = await res.text()
   const contentType = res.headers.get('content-type') ?? ''
@@ -90,10 +110,10 @@ async function readJsonResponse(res: Response): Promise<any> {
       throw new Error('Session expired — please refresh the page and sign in again.')
     }
     if (res.status === 504 || res.status === 408) {
-      throw new Error('The analysis took too long and the server timed out before it finished. Try again, and consider lowering ANALYSE_MAX_SEARCHES or using a faster model.')
+      throw new Error('The request took too long and the server timed out. Try again, or lower the max searches.')
     }
     if (res.status >= 500) {
-      throw new Error(`Server error (${res.status}). The analyse endpoint returned an HTML page instead of JSON. Check the server logs.`)
+      throw new Error(`Server error (${res.status}). The endpoint returned an HTML page instead of JSON. Check the server logs.`)
     }
     throw new Error(`Unexpected non-JSON response (${res.status}). The endpoint may have redirected or crashed.`)
   }
@@ -105,16 +125,23 @@ async function readJsonResponse(res: Response): Promise<any> {
   }
 }
 
+function applyKey(recordId: string, fieldName: string) {
+  return `${recordId}::${fieldName}`
+}
+
 export default function Dashboard() {
   const [items, setItems] = useState<FeedbackItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [analyses, setAnalyses] = useState<Record<string, AnalysisState>>({})
+  const [triages, setTriages] = useState<Record<string, TriageState>>({})
+  const [rewrites, setRewrites] = useState<Record<string, RewritesState>>({})
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [copied, setCopied] = useState<Record<string, boolean>>({})
   const [extraContext, setExtraContext] = useState<Record<string, string>>({})
-  const [showQueries, setShowQueries] = useState<Record<string, boolean>>({})
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [scope, setScope] = useState<Record<string, 'flagged-only' | 'whole-case'>>({})
+  const [editedText, setEditedText] = useState<Record<string, string>>({})
+  const [applyStates, setApplyStates] = useState<Record<string, ApplyState>>({})
 
   useEffect(() => {
     fetch('/api/fetch-feedback')
@@ -128,24 +155,93 @@ export default function Dashboard() {
       .finally(() => setLoading(false))
   }, [])
 
-  async function analyse(item: FeedbackItem) {
+  async function runTriage(item: FeedbackItem) {
     const key = item.feedback.id
-    setAnalyses(a => ({ ...a, [key]: { status: 'loading' } }))
+    setTriages(t => ({ ...t, [key]: { status: 'loading' } }))
+    // Clear stale rewrites — running triage again invalidates the rewrite drafts.
+    setRewrites(r => ({ ...r, [key]: { status: 'idle' } }))
     try {
-      const res = await fetch('/api/analyse-case', {
+      const res = await fetch('/api/feedback-triage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          feedback: item.feedback,
-          caseData: item.caseData,
+          feedbackId: key,
           extraContext: extraContext[key] ?? '',
         }),
       })
       const data = await readJsonResponse(res)
       if (data.error) throw new Error(data.error)
-      setAnalyses(a => ({ ...a, [key]: { status: 'done', data } }))
+      setTriages(t => ({ ...t, [key]: { status: 'done', data } }))
     } catch (e: any) {
-      setAnalyses(a => ({ ...a, [key]: { status: 'error', message: e.message } }))
+      setTriages(t => ({ ...t, [key]: { status: 'error', message: e.message } }))
+    }
+  }
+
+  async function generateRewrites(item: FeedbackItem) {
+    const key = item.feedback.id
+    const chosenScope = scope[key] ?? 'flagged-only'
+    setRewrites(r => ({ ...r, [key]: { status: 'loading' } }))
+    try {
+      const res = await fetch('/api/draft-rewrites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ feedbackId: key, scope: chosenScope }),
+      })
+      const data = await readJsonResponse(res)
+      if (data.error) throw new Error(data.error)
+      setRewrites(r => ({ ...r, [key]: { status: 'done', data } }))
+      // Seed the editable text state from suggestedText for each rewrite.
+      const seeded: Record<string, string> = { ...editedText }
+      for (const rw of (data.rewrites as RewriteEntry[])) {
+        const editKey = `${key}::${applyKey(rw.recordId, rw.fieldName)}`
+        if (seeded[editKey] === undefined) {
+          seeded[editKey] = rw.suggestedText
+        }
+      }
+      setEditedText(seeded)
+    } catch (e: any) {
+      setRewrites(r => ({ ...r, [key]: { status: 'error', message: e.message } }))
+    }
+  }
+
+  async function applyEdit(feedbackId: string, rw: RewriteEntry) {
+    const editKey = `${feedbackId}::${applyKey(rw.recordId, rw.fieldName)}`
+    const newValue = editedText[editKey] ?? rw.suggestedText
+    setApplyStates(s => ({ ...s, [editKey]: { status: 'applying' } }))
+    try {
+      const res = await fetch('/api/apply-edit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          feedbackId,
+          recordId: rw.recordId,
+          fieldName: rw.fieldName,
+          newValue,
+        }),
+      })
+      const data = await readJsonResponse(res)
+      if (res.status === 409 && data.conflict) {
+        setApplyStates(s => ({
+          ...s,
+          [editKey]: { status: 'conflict', actual: data.actual ?? null, expected: data.expected ?? '' },
+        }))
+        return
+      }
+      if (data.error) throw new Error(data.error)
+      setApplyStates(s => ({ ...s, [editKey]: { status: 'applied', appliedAt: data.appliedAt } }))
+      // Reflect the appliedAt in the rewrites state too.
+      setRewrites(r => {
+        const cur = r[feedbackId]
+        if (!cur || cur.status !== 'done') return r
+        const updated = cur.data.rewrites.map(x =>
+          x.recordId === rw.recordId && x.fieldName === rw.fieldName
+            ? { ...x, appliedAt: data.appliedAt }
+            : x,
+        )
+        return { ...r, [feedbackId]: { status: 'done', data: { ...cur.data, rewrites: updated } } }
+      })
+    } catch (e: any) {
+      setApplyStates(s => ({ ...s, [editKey]: { status: 'error', message: e.message } }))
     }
   }
 
@@ -168,8 +264,15 @@ export default function Dashboard() {
     low:    { label: 'Low confidence',    color: '#b91c1c', bg: '#fee2e2' },
   }
 
+  const severityConfig = {
+    high:   { label: 'High',   color: '#b91c1c', bg: '#fee2e2' },
+    medium: { label: 'Medium', color: '#b45309', bg: '#fef3c7' },
+    low:    { label: 'Low',    color: '#3b82c4', bg: '#dbeafe' },
+  }
+
   const selectedItem = items.find(i => i.feedback.id === selectedId) ?? null
-  const selectedState = selectedId ? (analyses[selectedId] ?? { status: 'idle' }) : null
+  const selectedTriage = selectedId ? (triages[selectedId] ?? { status: 'idle' as const }) : null
+  const selectedRewrites = selectedId ? (rewrites[selectedId] ?? { status: 'idle' as const }) : null
 
   return (
     <div className={styles.root}>
@@ -202,7 +305,6 @@ export default function Dashboard() {
       </header>
 
       <div className={styles.appShell}>
-        {/* Mobile overlay */}
         {sidebarOpen && (
           <div className={styles.sidebarOverlay} onClick={() => setSidebarOpen(false)} />
         )}
@@ -236,7 +338,7 @@ export default function Dashboard() {
             )}
             {items.map(item => {
               const isActive = item.feedback.id === selectedId
-              const state = analyses[item.feedback.id]
+              const state = triages[item.feedback.id]
               return (
                 <div
                   key={item.feedback.id}
@@ -295,7 +397,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {!loading && !error && selectedItem && (
+          {!loading && !error && selectedItem && selectedTriage && (
             <>
               {/* Case header */}
               <div className={styles.caseHeader}>
@@ -310,14 +412,14 @@ export default function Dashboard() {
                 </div>
                 <button
                   className={styles.analyseBtn}
-                  onClick={() => analyse(selectedItem)}
-                  disabled={selectedState?.status === 'loading'}
+                  onClick={() => runTriage(selectedItem)}
+                  disabled={selectedTriage.status === 'loading'}
                 >
-                  {selectedState?.status === 'loading' ? (
-                    <><span className={styles.btnSpinner} /> Analysing…</>
-                  ) : selectedState?.status === 'done'
-                    ? '↺ Re-analyse'
-                    : '⚡ Analyse'}
+                  {selectedTriage.status === 'loading' ? (
+                    <><span className={styles.btnSpinner} /> Checking…</>
+                  ) : selectedTriage.status === 'done'
+                    ? '↺ Re-run triage'
+                    : '⚡ Check feedback'}
                 </button>
               </div>
 
@@ -327,7 +429,7 @@ export default function Dashboard() {
                 <p className={styles.issueText}>{selectedItem.feedback.issueSummary}</p>
               </div>
 
-              {/* Context box — before analysis */}
+              {/* Context box — before triage */}
               <div className={styles.contextBox}>
                 <label className={styles.contextLabel} htmlFor="ctx-before">
                   Additional context{' '}
@@ -347,19 +449,19 @@ export default function Dashboard() {
                 />
               </div>
 
-              {/* Error state */}
-              {selectedState?.status === 'error' && (
+              {/* Triage error */}
+              {selectedTriage.status === 'error' && (
                 <div className={styles.inlineError}>
-                  Analysis failed: {selectedState.message}
+                  Triage failed: {selectedTriage.message}
                 </div>
               )}
 
-              {/* Results */}
-              {selectedState?.status === 'done' && (
+              {/* Triage results */}
+              {selectedTriage.status === 'done' && (
                 <>
                   {/* Verdict banner */}
                   {(() => {
-                    const vc = verdictConfig[selectedState.data.verdict]
+                    const vc = verdictConfig[selectedTriage.data.verdict]
                     return (
                       <div
                         className={styles.verdictBanner}
@@ -367,39 +469,38 @@ export default function Dashboard() {
                       >
                         <span className={styles.verdictDot} style={{ background: vc.color }} />
                         <strong style={{ color: vc.color }}>{vc.label}</strong>
-                        <span className={styles.verdictReason}>{selectedState.data.verdictReason}</span>
+                        <span className={styles.verdictReason}>{selectedTriage.data.verdictReason}</span>
                       </div>
                     )
                   })()}
 
-                  {/* Case scenario — extracted patient details */}
-                  {selectedState.data.caseScenario && (
+                  {/* Case scenario */}
+                  {selectedTriage.data.caseScenario && (
                     <div className={styles.section}>
                       <span className={styles.sectionTitle}>Clinical scenario (from case)</span>
-                      <p className={styles.caseScenarioText}>{selectedState.data.caseScenario}</p>
+                      <p className={styles.caseScenarioText}>{selectedTriage.data.caseScenario}</p>
                     </div>
                   )}
 
                   {/* Summary */}
                   <div className={styles.section}>
                     <span className={styles.sectionTitle}>Summary</span>
-                    <p className={styles.summaryText}>{selectedState.data.summary}</p>
+                    <p className={styles.summaryText}>{selectedTriage.data.summary}</p>
                   </div>
 
-                  {/* ── Sources & Verification ── */}
+                  {/* Sources & Verification */}
                   <div className={styles.section}>
                     <span className={styles.sectionTitle}>Sources & verification</span>
 
-                    {/* Verification badges */}
-                    {selectedState.data._verification && (
+                    {selectedTriage.data._verification && (
                       <div className={styles.verificationBar}>
-                        {selectedState.data._verification.niceCksVerified ? (
+                        {selectedTriage.data._verification.niceCksVerified ? (
                           <span className={styles.verifiedBadge}>
-                            ✅ NICE CKS verified — accessed {selectedState.data._verification.niceCksUrls.length} page{selectedState.data._verification.niceCksUrls.length !== 1 ? 's' : ''}
+                            ✅ NICE CKS verified — accessed {selectedTriage.data._verification.niceCksUrls.length} page{selectedTriage.data._verification.niceCksUrls.length !== 1 ? 's' : ''}
                           </span>
-                        ) : selectedState.data._verification.niceVerified ? (
+                        ) : selectedTriage.data._verification.niceVerified ? (
                           <span className={styles.partialBadge}>
-                            ⚠ NICE accessed but not CKS specifically — {selectedState.data._verification.niceUrls.length} NICE page{selectedState.data._verification.niceUrls.length !== 1 ? 's' : ''}
+                            ⚠ NICE accessed but not CKS specifically — {selectedTriage.data._verification.niceUrls.length} NICE page{selectedTriage.data._verification.niceUrls.length !== 1 ? 's' : ''}
                           </span>
                         ) : (
                           <span className={styles.unverifiedBadge}>
@@ -407,15 +508,14 @@ export default function Dashboard() {
                           </span>
                         )}
                         <span className={styles.urlCountBadge}>
-                          {selectedState.data._verification.citedUrls.length} URL{selectedState.data._verification.citedUrls.length !== 1 ? 's' : ''} cited
+                          {selectedTriage.data._verification.citedUrls.length} URL{selectedTriage.data._verification.citedUrls.length !== 1 ? 's' : ''} cited
                         </span>
                       </div>
                     )}
 
-                    {/* Structured sources (new format: objects with url/title/finding) */}
-                    {selectedState.data.sources?.length > 0 && isStructuredSources(selectedState.data.sources) && (
+                    {selectedTriage.data.sources?.length > 0 && (
                       <div className={styles.sourcesGrid}>
-                        {selectedState.data.sources.map((src, i) => {
+                        {selectedTriage.data.sources.map((src, i) => {
                           const domain = urlDomain(src.url)
                           const isNiceCks = domain.includes('cks.nice.org.uk')
                           const isNice = domain.includes('nice.org.uk')
@@ -444,103 +544,229 @@ export default function Dashboard() {
                         })}
                       </div>
                     )}
-
-                    {/* Legacy sources (plain strings) — backwards compatible */}
-                    {selectedState.data.sources?.length > 0 && !isStructuredSources(selectedState.data.sources) && (
-                      <ul className={styles.sourceList}>
-                        {(selectedState.data.sources as string[]).map((s, i) => <li key={i}>{s}</li>)}
-                      </ul>
-                    )}
-
-                    {/* All cited URLs from annotations (ground truth) */}
-                    {selectedState.data._verification && selectedState.data._verification.citedUrls.length > 0 && (
-                      <div className={styles.citedUrlsSection}>
-                        <span className={styles.citedUrlsTitle}>
-                          All URLs accessed during web search ({selectedState.data._verification.citedUrls.length})
-                        </span>
-                        <ul className={styles.citedUrlsList}>
-                          {selectedState.data._verification.citedUrls.map((url, i) => {
-                            const domain = urlDomain(url)
-                            const isNice = domain.includes('nice.org.uk')
-                            return (
-                              <li key={i} className={isNice ? styles.citedUrlNice : ''}>
-                                <span className={styles.citedUrlDomain}>{domain}</span>
-                                <a href={url} target="_blank" rel="noopener noreferrer">{url}</a>
-                              </li>
-                            )
-                          })}
-                        </ul>
-                      </div>
-                    )}
-
-                    {/* Search queries (collapsible) */}
-                    {selectedState.data._verification && selectedState.data._verification.searchQueries.length > 0 && (
-                      <div className={styles.searchQueriesSection}>
-                        <button
-                          className={styles.searchQueriesToggle}
-                          onClick={() =>
-                            setShowQueries(q => ({
-                              ...q,
-                              [selectedItem.feedback.id]: !q[selectedItem.feedback.id],
-                            }))
-                          }
-                        >
-                          {showQueries[selectedItem.feedback.id] ? '▾' : '▸'}{' '}
-                          Search queries made ({selectedState.data._verification.searchQueries.length})
-                        </button>
-                        {showQueries[selectedItem.feedback.id] && (
-                          <ul className={styles.searchQueriesList}>
-                            {selectedState.data._verification.searchQueries.map((q, i) => (
-                              <li key={i}>🔍 {q}</li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    )}
                   </div>
 
-                  {/* Field changes */}
+                  {/* Flagged cells (summary list, before rewrites) */}
                   <div className={styles.section}>
                     <span className={styles.sectionTitle}>
-                      {selectedState.data.fieldChanges?.length > 0
-                        ? `Suggested field changes (${selectedState.data.fieldChanges.length})`
-                        : 'Field changes'}
+                      {selectedTriage.data.flaggedCells?.length > 0
+                        ? `Cells flagged for change (${selectedTriage.data.flaggedCells.length})`
+                        : 'Cells flagged'}
                     </span>
-                    {selectedState.data.fieldChanges?.length > 0 ? (
+                    {selectedTriage.data.flaggedCells?.length > 0 ? (
                       <div className={styles.fieldChanges}>
-                        {selectedState.data.fieldChanges.map((fc, i) => {
-                          const cc = confidenceConfig[fc.confidence] ?? confidenceConfig.medium
+                        {selectedTriage.data.flaggedCells.map((fc, i) => {
+                          const sc = severityConfig[fc.severity] ?? severityConfig.medium
                           return (
                             <div key={i} className={styles.fieldCard}>
                               <div className={styles.fieldCardHeader}>
-                                <span className={styles.fieldName}>{fc.fieldName}</span>
+                                <span className={styles.fieldName}>
+                                  Record {fc.rowIndex + 1} · {fc.fieldName}
+                                </span>
                                 <span
                                   className={styles.confidencePill}
-                                  style={{ color: cc.color, background: cc.bg }}
+                                  style={{ color: sc.color, background: sc.bg }}
                                 >
-                                  {cc.label}
+                                  {sc.label} severity
                                 </span>
                               </div>
                               <p className={styles.fieldIssue}>{fc.issue}</p>
-                              <div className={styles.diffRow}>
-                                <div className={`${styles.diffBox} ${styles.diffBefore}`}>
-                                  <span className={styles.diffLabel}>Current</span>
-                                  <p>{fc.currentText}</p>
-                                </div>
-                                <div className={styles.diffArrow}>→</div>
-                                <div className={`${styles.diffBox} ${styles.diffAfter}`}>
-                                  <span className={styles.diffLabel}>Suggested</span>
-                                  <p>{fc.suggestedText}</p>
-                                </div>
-                              </div>
                             </div>
                           )
                         })}
                       </div>
                     ) : (
-                      <p className={styles.noChanges}>No specific field changes recommended.</p>
+                      <p className={styles.noChanges}>
+                        No specific cells flagged{selectedTriage.data.verdict === 'invalid' ? ' — feedback assessed as not valid.' : '.'}
+                      </p>
                     )}
                   </div>
+
+                  {/* Rewrite generator (Stage 2) — only if there's something to rewrite */}
+                  {(selectedTriage.data.verdict === 'valid' || selectedTriage.data.verdict === 'partial') && (
+                    <div className={styles.reanalyseBox}>
+                      <p className={styles.reanalyseTitle}>Generate per-cell rewrites</p>
+                      <p className={styles.reanalyseSubtitle}>
+                        Opus 4.7 will draft a drop-in replacement for each cell. You'll review and apply each
+                        rewrite individually.
+                      </p>
+                      <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--navy)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
+                          Scope
+                        </span>
+                        <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <input
+                            type="radio"
+                            name={`scope-${selectedItem.feedback.id}`}
+                            checked={(scope[selectedItem.feedback.id] ?? 'flagged-only') === 'flagged-only'}
+                            onChange={() =>
+                              setScope(s => ({ ...s, [selectedItem.feedback.id]: 'flagged-only' }))
+                            }
+                          />
+                          Flagged sections only ({selectedTriage.data.flaggedCells?.length ?? 0})
+                        </label>
+                        <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <input
+                            type="radio"
+                            name={`scope-${selectedItem.feedback.id}`}
+                            checked={(scope[selectedItem.feedback.id] ?? 'flagged-only') === 'whole-case'}
+                            onChange={() =>
+                              setScope(s => ({ ...s, [selectedItem.feedback.id]: 'whole-case' }))
+                            }
+                          />
+                          Whole case (costs more)
+                        </label>
+                      </div>
+                      <button
+                        className={styles.reanalyseBtn}
+                        onClick={() => generateRewrites(selectedItem)}
+                        disabled={selectedRewrites?.status === 'loading'}
+                      >
+                        {selectedRewrites?.status === 'loading' ? (
+                          <><span className={styles.btnSpinner} /> Drafting rewrites…</>
+                        ) : selectedRewrites?.status === 'done'
+                          ? '↺ Re-draft rewrites'
+                          : '✎ Generate rewrites'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Rewrites error */}
+                  {selectedRewrites?.status === 'error' && (
+                    <div className={styles.inlineError}>
+                      Rewrite draft failed: {selectedRewrites.message}
+                    </div>
+                  )}
+
+                  {/* Rewrite cards */}
+                  {selectedRewrites?.status === 'done' && (
+                    <div className={styles.section}>
+                      <span className={styles.sectionTitle}>
+                        Per-cell rewrites ({selectedRewrites.data.rewrites.length})
+                        {selectedRewrites.data.scope === 'whole-case' && ' — whole case'}
+                      </span>
+
+                      {(selectedRewrites.data.changedSinceTriage?.length ?? 0) > 0 && (
+                        <div className={styles.inlineError} style={{ marginBottom: 12 }}>
+                          ⚠ {selectedRewrites.data.changedSinceTriage!.length} cell(s) changed in Airtable
+                          between triage and rewrite. Conflict detection will flag stale rewrites at the
+                          apply step.
+                        </div>
+                      )}
+
+                      {selectedRewrites.data.rewrites.length === 0 ? (
+                        <p className={styles.noChanges}>
+                          No rewrites returned. Nothing to apply.
+                        </p>
+                      ) : (
+                        <div className={styles.fieldChanges}>
+                          {selectedRewrites.data.rewrites.map((rw, i) => {
+                            const cc = confidenceConfig[rw.confidence] ?? confidenceConfig.medium
+                            const editKey = `${selectedItem.feedback.id}::${applyKey(rw.recordId, rw.fieldName)}`
+                            const applyState = applyStates[editKey] ?? { status: 'idle' as const }
+                            const editedVal = editedText[editKey] ?? rw.suggestedText
+                            const isApplied = rw.appliedAt || applyState.status === 'applied'
+                            return (
+                              <div key={i} className={styles.fieldCard}>
+                                <div className={styles.fieldCardHeader}>
+                                  <span className={styles.fieldName}>
+                                    Record {rw.rowIndex + 1} · {rw.fieldName}
+                                  </span>
+                                  <span
+                                    className={styles.confidencePill}
+                                    style={{ color: cc.color, background: cc.bg }}
+                                  >
+                                    {cc.label}
+                                  </span>
+                                </div>
+                                <p className={styles.fieldIssue}>{rw.rationale}</p>
+                                {rw.sourceUrl && (
+                                  <p style={{ padding: '0 16px', margin: '4px 0 8px', fontSize: 12 }}>
+                                    <a
+                                      href={rw.sourceUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{ color: 'var(--accent)' }}
+                                    >
+                                      {urlDomain(rw.sourceUrl)}
+                                    </a>
+                                  </p>
+                                )}
+                                <div className={styles.diffRow}>
+                                  <div className={`${styles.diffBox} ${styles.diffBefore}`}>
+                                    <span className={styles.diffLabel}>Current</span>
+                                    <p>{rw.currentText}</p>
+                                  </div>
+                                  <div className={styles.diffArrow}>→</div>
+                                  <div className={`${styles.diffBox} ${styles.diffAfter}`}>
+                                    <span className={styles.diffLabel}>Suggested (editable)</span>
+                                    <textarea
+                                      className={styles.contextTextarea}
+                                      style={{ minHeight: 120, background: '#fff', border: '1px solid #bbf7d0' }}
+                                      value={editedVal}
+                                      onChange={e =>
+                                        setEditedText(t => ({ ...t, [editKey]: e.target.value }))
+                                      }
+                                      rows={Math.max(4, editedVal.split('\n').length + 1)}
+                                      disabled={!!isApplied}
+                                    />
+                                  </div>
+                                </div>
+                                <div style={{ padding: '0 16px 14px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                                  <button
+                                    className={styles.copyBtn}
+                                    onClick={() => applyEdit(selectedItem.feedback.id, rw)}
+                                    disabled={applyState.status === 'applying' || !!isApplied}
+                                    style={{
+                                      background: isApplied ? '#16a34a' : undefined,
+                                      cursor: isApplied ? 'default' : undefined,
+                                    }}
+                                  >
+                                    {applyState.status === 'applying'
+                                      ? 'Applying…'
+                                      : isApplied
+                                      ? `✓ Applied${rw.appliedAt ? ' ' + new Date(rw.appliedAt).toLocaleTimeString() : ''}`
+                                      : 'Update Airtable'}
+                                  </button>
+                                  {applyState.status === 'conflict' && (
+                                    <div style={{ flexBasis: '100%', marginTop: 6 }} className={styles.inlineError}>
+                                      <strong>Conflict — Airtable already changed.</strong>
+                                      <div style={{ marginTop: 6, fontSize: 13 }}>
+                                        <em>Live value:</em>
+                                        <pre style={{
+                                          background: '#fff',
+                                          padding: 8,
+                                          borderRadius: 6,
+                                          whiteSpace: 'pre-wrap',
+                                          margin: '4px 0',
+                                          fontSize: 12,
+                                        }}>{applyState.actual ?? '(empty)'}</pre>
+                                        <em>What the rewrite expected:</em>
+                                        <pre style={{
+                                          background: '#fff',
+                                          padding: 8,
+                                          borderRadius: 6,
+                                          whiteSpace: 'pre-wrap',
+                                          margin: '4px 0',
+                                          fontSize: 12,
+                                        }}>{applyState.expected}</pre>
+                                        <p style={{ margin: 0 }}>Re-run rewrites to refresh, or apply manually in Airtable.</p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {applyState.status === 'error' && (
+                                    <span style={{ color: '#dc2626', fontSize: 13 }}>
+                                      {applyState.message}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Draft email */}
                   {selectedItem.feedback.contactRegardingOutcome && (
@@ -550,7 +776,7 @@ export default function Dashboard() {
                         <button
                           className={styles.copyBtn}
                           onClick={() =>
-                            copyEmail(selectedItem.feedback.id, selectedState.data.emailResponse)
+                            copyEmail(selectedItem.feedback.id, selectedTriage.data.emailResponse)
                           }
                         >
                           {copied[selectedItem.feedback.id] ? '✓ Copied' : 'Copy'}
@@ -559,15 +785,16 @@ export default function Dashboard() {
                       {selectedItem.feedback.contactEmail && (
                         <p className={styles.emailTo}>To: {selectedItem.feedback.contactEmail}</p>
                       )}
-                      <pre className={styles.emailText}>{selectedState.data.emailResponse}</pre>
+                      <pre className={styles.emailText}>{selectedTriage.data.emailResponse}</pre>
                     </div>
                   )}
 
-                  {/* Re-analyse box — after results */}
+                  {/* Re-run triage box */}
                   <div className={styles.reanalyseBox}>
-                    <p className={styles.reanalyseTitle}>Refine this analysis</p>
+                    <p className={styles.reanalyseTitle}>Refine this triage</p>
                     <p className={styles.reanalyseSubtitle}>
-                      Add extra context or corrections and re-run the analysis
+                      Add extra context or corrections and re-run the triage. This invalidates any
+                      drafted rewrites.
                     </p>
                     <textarea
                       className={styles.contextTextarea}
@@ -580,12 +807,12 @@ export default function Dashboard() {
                     />
                     <button
                       className={styles.reanalyseBtn}
-                      onClick={() => analyse(selectedItem)}
-                      disabled={analyses[selectedItem.feedback.id]?.status === 'loading'}
+                      onClick={() => runTriage(selectedItem)}
+                      disabled={triages[selectedItem.feedback.id]?.status === 'loading'}
                     >
-                      {analyses[selectedItem.feedback.id]?.status === 'loading' ? (
-                        <><span className={styles.btnSpinner} /> Analysing…</>
-                      ) : '↺ Re-analyse with this context'}
+                      {triages[selectedItem.feedback.id]?.status === 'loading' ? (
+                        <><span className={styles.btnSpinner} /> Re-running…</>
+                      ) : '↺ Re-run triage with this context'}
                     </button>
                   </div>
                 </>

@@ -1,4 +1,12 @@
 // app/api/analyse-case/route.ts
+// DEPRECATED — kept for one release as a fallback. The primary feedback-review
+// flow has been split into two stages:
+//   • POST /api/feedback-triage   (Sonnet 4.6 — verdict + flagged cells)
+//   • POST /api/draft-rewrites    (Opus 4.7  — per-cell drop-in replacements)
+//   • POST /api/apply-edit        (PATCH a single Airtable cell with conflict check)
+// New UI calls the two-stage endpoints. Leave this file in place until the new
+// flow has been live for a release cycle, then delete.
+//
 // Assesses user feedback against a case and verifies against UK guidelines.
 // Uses callTriageAI with a strict JSON schema that forces a self-consistency check
 // before the verdict is written, so contradictions (invalid verdict + fieldChanges)

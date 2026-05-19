@@ -214,6 +214,180 @@ export const TRANSCRIPT_ANALYSIS_SCHEMA = {
   },
 } as const
 
+// Stage 1 of the two-stage feedback flow. Sonnet triages the feedback against
+// current UK guidelines and identifies WHICH (recordId, fieldName) cells are
+// clinically affected. It does NOT draft suggested replacement text — that is
+// Stage 2's job (DRAFT_REWRITES_SCHEMA, run on Opus).
+export const FEEDBACK_TRIAGE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'caseScenario',
+    'summary',
+    'sources',
+    'flaggedCells',
+    'verdictSelfCheck',
+    'verdict',
+    'verdictReason',
+    'emailResponse',
+  ],
+  properties: {
+    caseScenario: {
+      type: 'string',
+      description: 'Short paragraph describing the key clinical details from the case relevant to the feedback.',
+    },
+    summary: {
+      type: 'string',
+      description: 'Paragraph summarising whether the feedback is correct, applied to this specific patient.',
+    },
+    sources: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['title', 'url', 'finding'],
+        properties: {
+          title: { type: 'string' },
+          url: { type: 'string' },
+          finding: { type: 'string' },
+        },
+      },
+    },
+    flaggedCells: {
+      type: 'array',
+      description:
+        'Every distinct (recordId, fieldName) cell that is clinically affected by this feedback. Each entry identifies a problem area but does NOT propose fixes — Stage 2 handles rewriting. Empty array is valid only when feedback was incorrect or genuinely uncertain.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['recordId', 'fieldName', 'rowIndex', 'issue', 'severity'],
+        properties: {
+          recordId: {
+            type: 'string',
+            description: 'Airtable record ID (rec...) for the row containing this cell. Must be copied verbatim from the structured case data shown above — never invented.',
+          },
+          fieldName: {
+            type: 'string',
+            description: 'Exact Airtable field name (case-sensitive) for the cell. Must match a key from the record\'s fields map.',
+          },
+          rowIndex: {
+            type: 'integer',
+            minimum: 0,
+            description: '0-based position of this record in the structured case data, for human-readable display.',
+          },
+          issue: {
+            type: 'string',
+            description: 'What is clinically wrong with this cell. Describe the problem only — do NOT propose replacement text.',
+          },
+          severity: { type: 'string', enum: ['high', 'medium', 'low'] },
+        },
+      },
+    },
+    verdictSelfCheck: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['flaggedCellsCount', 'summaryAcknowledgesProblem', 'verdictRule'],
+      description: 'Mechanical self-check before committing to a verdict. Fill honestly based on the fields above.',
+      properties: {
+        flaggedCellsCount: {
+          type: 'integer',
+          description: 'Count of entries in your flaggedCells array above.',
+        },
+        summaryAcknowledgesProblem: {
+          type: 'boolean',
+          description:
+            'True if your summary contains ANY phrase acknowledging the user raised a valid point (e.g. "correct", "good point", "should be updated", "is reasonable", "valid issue"). False otherwise.',
+        },
+        verdictRule: {
+          type: 'string',
+          enum: [
+            'changes_needed_partial_or_valid',
+            'no_changes_feedback_was_wrong_so_invalid',
+            'no_changes_cannot_determine_so_uncertain',
+          ],
+          description:
+            'If flaggedCellsCount > 0 OR summaryAcknowledgesProblem = true, MUST be "changes_needed_partial_or_valid". Only pick invalid/uncertain when both are false/0.',
+        },
+      },
+    },
+    verdict: {
+      type: 'string',
+      enum: ['valid', 'partial', 'invalid', 'uncertain'],
+      description:
+        'Must align with verdictSelfCheck.verdictRule: changes_needed_partial_or_valid → valid|partial; no_changes_feedback_was_wrong_so_invalid → invalid; no_changes_cannot_determine_so_uncertain → uncertain.',
+    },
+    verdictReason: {
+      type: 'string',
+      description: 'One or two sentence plain-English explanation of the verdict.',
+    },
+    emailResponse: {
+      type: 'string',
+      description: 'Draft email response, or exactly "No contact requested" if none needed.',
+    },
+  },
+} as const
+
+// Stage 2 of the two-stage feedback flow. Opus drafts a drop-in replacement
+// for every target cell, using the Stage 1 triage as input.
+export const DRAFT_REWRITES_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['rewrites'],
+  properties: {
+    rewrites: {
+      type: 'array',
+      description:
+        'One entry per target cell. Each must include the recordId and fieldName so the UI can route the eventual write to the correct Airtable record.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'recordId',
+          'fieldName',
+          'rowIndex',
+          'currentText',
+          'suggestedText',
+          'rationale',
+          'confidence',
+        ],
+        properties: {
+          recordId: {
+            type: 'string',
+            description: 'Airtable record ID (rec...) for the row containing this cell. Must match a recordId from the case data provided.',
+          },
+          fieldName: {
+            type: 'string',
+            description: 'Exact Airtable field name (case-sensitive). Must match a key from the record\'s fields map.',
+          },
+          rowIndex: {
+            type: 'integer',
+            minimum: 0,
+            description: '0-based position of this record in the case data, for human-readable display.',
+          },
+          currentText: {
+            type: 'string',
+            description: 'The CURRENT value of this cell, copied verbatim from the case data. Used for conflict detection when the rewrite is applied — if the live Airtable value no longer matches, the write is refused.',
+          },
+          suggestedText: {
+            type: 'string',
+            description:
+              'Copy/paste-ready replacement text. The complete new value the user will paste into Airtable, written in the same prose style as the original. Never write meta-instructions ("change X to Y"), never truncate, never describe what to change — perform the change.',
+          },
+          rationale: {
+            type: 'string',
+            description: 'One or two sentences explaining why this rewrite fixes the clinical issue identified in the triage, with reference to the relevant guideline.',
+          },
+          confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+          sourceUrl: {
+            type: 'string',
+            description: 'URL of the guideline page backing this rewrite. Optional if rewrite is style-only and not driven by a specific guideline.',
+          },
+        },
+      },
+    },
+  },
+} as const
+
 export const FULL_ANALYSIS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
