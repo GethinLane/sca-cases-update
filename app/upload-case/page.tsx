@@ -34,6 +34,87 @@ const ICE_ROW: Record<string, number> = { ideas: 1, concerns: 2, expectations: 3
 const MAX_ROWS = 16          // matches lib/case-parser MAX_CASE_ROWS
 const SOFT_ROW_WARN = 8      // matches lib/case-parser SOFT_ROW_WARN
 
+// Best-effort guess of which Airtable field a parsed heading maps to. Tries
+// progressively looser matches and returns the strongest hit, or undefined
+// if nothing scores above the fuzzy threshold. The whole auto-map step
+// funnels through this one function so future tweaks happen in one place.
+function guessFieldForHeading(
+  heading: string,
+  realFields: readonly string[],
+): string | undefined {
+  if (realFields.length === 0) return undefined
+
+  // ICE: <Subsection> headings always map to a single "ICE" field.
+  if (/^ICE\s*:/i.test(heading)) {
+    const ice = realFields.find(f => f.toLowerCase() === 'ice')
+    if (ice) return ice
+  }
+
+  // 1. Exact match.
+  if (realFields.includes(heading)) return heading
+  // 2. Case-insensitive match.
+  const lcHit = realFields.find(f => f.toLowerCase() === heading.toLowerCase())
+  if (lcHit) return lcHit
+  // 3. Normalised match — strip punctuation/whitespace, lowercase. Catches
+  //    "Data Gathering: Positive Indicators" vs "Data Gathering Positive
+  //    Indicators" and similar punctuation drift between author and schema.
+  const normHeading = normFieldName(heading)
+  const normHit = realFields.find(f => normFieldName(f) === normHeading)
+  if (normHit) return normHit
+  // 4. Hand-curated synonym table for common shorthand.
+  const synHit = SYNONYM_MAP[heading.toLowerCase()]
+  if (synHit) {
+    const real = realFields.find(f => f.toLowerCase() === synHit.toLowerCase())
+    if (real) return real
+  }
+  // 5. Token-set fuzzy match. Jaccard similarity of lowercased alphanumeric
+  //    token sets (stopwords dropped). Catches cases where the heading and
+  //    the field share most of the same significant words but have extras
+  //    or reordering. Threshold tuned by hand: 0.55 catches "Past Medical
+  //    History" vs "Patient Past Medical Hx" but not random short
+  //    coincidences like "Age" vs "Patient Age".
+  const headingTokens = tokenise(heading)
+  if (headingTokens.size === 0) return undefined
+  let best: { field: string; score: number } | undefined
+  for (const f of realFields) {
+    const fTokens = tokenise(f)
+    if (fTokens.size === 0) continue
+    // Set iteration via .forEach() — avoids the ES5-target spread-on-Set
+    // restriction (the tsconfig targets es5; spread-on-Set would force a
+    // downlevelIteration flag). Computing |intersection| + |union| from
+    // sizes is cheaper than building two new Sets anyway.
+    let intersectionSize = 0
+    headingTokens.forEach(t => { if (fTokens.has(t)) intersectionSize++ })
+    const unionSize = headingTokens.size + fTokens.size - intersectionSize
+    if (unionSize === 0) continue
+    const score = intersectionSize / unionSize
+    if (!best || score > best.score) best = { field: f, score }
+  }
+  if (best && best.score >= 0.55) return best.field
+  return undefined
+}
+
+function normFieldName(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function tokenise(s: string): Set<string> {
+  const STOP = new Set(['the', 'a', 'an', 'of', 'and', 'or', 'for', 'to'])
+  return new Set(
+    s.toLowerCase().split(/[^a-z0-9]+/).filter(t => t && !STOP.has(t)),
+  )
+}
+
+const SYNONYM_MAP: Record<string, string> = {
+  'pmh': 'Past Medical History',
+  'past medical hx': 'Past Medical History',
+  'meds': 'Medications',
+  'medication': 'Medications',
+  'social hx': 'Social History',
+  'family hx': 'Family History',
+  'fh': 'Family History',
+}
+
 export default function CaseUploaderPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -96,31 +177,13 @@ export default function CaseUploaderPage() {
   // user has already changed by hand — track that in `mapping`.
   useEffect(() => {
     if (sections.length === 0 || realFields.length === 0) return
-    const fieldsSet = new Set(realFields)
-    const lc = new Map(realFields.map(f => [f.toLowerCase(), f]))
-    const synonyms: Record<string, string> = {
-      'pmh': 'Past Medical History',
-      'meds': 'Medications',
-    }
     setMapping(prev => {
       let dirty = false
       const next = { ...prev }
       for (const s of sections) {
         if (next[s.heading] !== undefined) continue   // user-edited or already set
-        let resolved: string = ''
-        if (/^ICE\s*:/i.test(s.heading)) {
-          resolved = fieldsSet.has('ICE') ? 'ICE' : (lc.get('ice') ?? '')
-        } else if (fieldsSet.has(s.heading)) {
-          resolved = s.heading
-        } else {
-          const ci = lc.get(s.heading.toLowerCase())
-          if (ci) resolved = ci
-          else {
-            const syn = synonyms[s.heading.toLowerCase()]
-            if (syn && fieldsSet.has(syn)) resolved = syn
-          }
-        }
-        next[s.heading] = resolved
+        const guess = guessFieldForHeading(s.heading, realFields)
+        next[s.heading] = guess ?? ''
         dirty = true
       }
       return dirty ? next : prev
