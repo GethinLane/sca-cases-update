@@ -31,7 +31,8 @@ interface UploadResult {
 }
 
 const ICE_ROW: Record<string, number> = { ideas: 1, concerns: 2, expectations: 3 }
-const MAX_ROWS = 8
+const MAX_ROWS = 16          // matches lib/case-parser MAX_CASE_ROWS
+const SOFT_ROW_WARN = 8      // matches lib/case-parser SOFT_ROW_WARN
 
 export default function CaseUploaderPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -41,6 +42,7 @@ export default function CaseUploaderPage() {
   const [parsing, setParsing] = useState(false)
   const [parseError, setParseError] = useState<string | null>(null)
   const [conversionWarnings, setConversionWarnings] = useState<string[]>([])
+  const [missingHeadings, setMissingHeadings] = useState<string[]>([])
   const [sections, setSections] = useState<ParsedSection[]>([])
 
   // heading → real Airtable field name. Empty string means "don't write".
@@ -145,6 +147,7 @@ export default function CaseUploaderPage() {
     setFileSize(file.size)
     setParseError(null)
     setConversionWarnings([])
+    setMissingHeadings([])
     setSections([])
     setMapping({})
     setEdits({})
@@ -159,6 +162,7 @@ export default function CaseUploaderPage() {
       if (!res.ok || data.error) throw new Error(data.error ?? `Parse failed (${res.status})`)
       setSections(Array.isArray(data.sections) ? data.sections : [])
       setConversionWarnings(Array.isArray(data.conversionWarnings) ? data.conversionWarnings : [])
+      setMissingHeadings(Array.isArray(data.missingCanonicalHeadings) ? data.missingCanonicalHeadings : [])
     } catch (err: any) {
       setParseError(err?.message ?? String(err))
     } finally {
@@ -343,6 +347,18 @@ export default function CaseUploaderPage() {
               </ul>
             </details>
           )}
+          {missingHeadings.length > 0 && (
+            <details className={`${styles.flash} ${styles.flashWarn}`} open>
+              <summary>
+                <strong>{missingHeadings.length}</strong> expected section(s) not found
+                in this document — review whether they should be added to the source
+                before uploading
+              </summary>
+              <ul style={{ margin: '6px 0 0 16px' }}>
+                {missingHeadings.map(h => <li key={h}>{h}</li>)}
+              </ul>
+            </details>
+          )}
         </div>
 
         {/* Step 2: target table */}
@@ -409,6 +425,15 @@ export default function CaseUploaderPage() {
                         {section.heading}
                         {isIce && <span className={styles.iceLabel} style={{ marginLeft: 8 }}>ICE row {ICE_ROW[(section.subsection ?? '').toLowerCase()] ?? '?'}</span>}
                         {!targetField && selectedTable && <span className={styles.unmapped} style={{ marginLeft: 8 }}>Unmapped</span>}
+                        {items.length > SOFT_ROW_WARN && (
+                          <span
+                            className={styles.unmapped}
+                            style={{ marginLeft: 8, background: '#fef3c7', color: '#92400e', borderColor: '#fde68a' }}
+                            title={`This section has ${items.length} items. The stated norm is up to ${SOFT_ROW_WARN}; make sure your "${selectedTable || 'Case'}" table can hold that many rows for this field.`}
+                          >
+                            {items.length} items
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className={styles.sectionMapping}>

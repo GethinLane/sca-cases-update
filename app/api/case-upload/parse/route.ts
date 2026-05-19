@@ -4,7 +4,11 @@
 // same case-parser.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { parseMarkdownToSections, type ParsedSection } from '@/lib/case-parser'
+import {
+  parseMarkdownToSections,
+  findMissingCanonicalHeadings,
+  type ParsedSection,
+} from '@/lib/case-parser'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -93,9 +97,12 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  const missingCanonicalHeadings = findMissingCanonicalHeadings(sections)
+
   return NextResponse.json({
     sections,
     conversionWarnings,
+    missingCanonicalHeadings,
     sourceMarkdownLength: markdown.length,
   })
 }

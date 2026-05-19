@@ -135,16 +135,70 @@ function splitIntoItems(body: string): string[] {
   return [body.trim()]
 }
 
-// Take parsed sections and project them onto Airtable rows. Returns up to 8
-// rows. Row N is { fieldName → value } for fields that have a value at index
-// N-1 in their items array. Singleton fields populate row 1 only. ICE
-// subsection headings populate the row given by ICE_SUBSECTION_ROW.
+// Take parsed sections and project them onto Airtable rows. Row N is
+// { fieldName → value } for fields that have a value at index N-1 in their
+// items array. Singleton fields populate row 1 only. ICE subsection headings
+// populate the row given by ICE_SUBSECTION_ROW.
 export interface RowProjection {
   rowIndex: number      // 1-based row number for human-readable display.
   fields: Record<string, string>
 }
 
-export const MAX_CASE_ROWS = 8
+// Hard cap on rows we'll project per case. The user's stated norm is 8, but
+// some cases ship 12 indicators in Relating-to-Others (seen in real uploads),
+// and Airtable doesn't enforce row counts. 16 keeps us defensive against
+// runaway parses while accommodating the cases we've actually seen.
+export const MAX_CASE_ROWS = 16
+// Soft warning threshold — anything beyond this triggers a UI warning so the
+// user can confirm their target Case table has enough rows.
+export const SOFT_ROW_WARN = 8
+
+// Canonical headings we expect on a well-formed SCA case. Used by the
+// uploader to surface "this document is missing X" warnings.
+export const CANONICAL_SCA_HEADINGS: readonly string[] = [
+  'Patient Name',
+  'Age',
+  'Past Medical History',
+  'Medications',
+  'Notes Entry Label',
+  'Notes Entry Content',
+  'Test Results Label',
+  'Test Results Content',
+  'Role Player Introduction',
+  'Opening Sentence',
+  'Information Divulged Freely',
+  'Information Divulged Only If Asked',
+  'PMH / Medications / Allergies (Role Player Version)',
+  'Social History',
+  'Family History',
+  'ICE: Ideas',
+  'ICE: Concerns',
+  'ICE: Expectations',
+  'Data Gathering: Positive Indicators',
+  'Data Gathering: Negative Indicators',
+  'Clinical Management: Positive Indicators',
+  'Clinical Management: Negative Indicators',
+  'Relating to Others: Positive Indicators',
+  'Relating to Others: Negative Indicators',
+  'Key Issue Titles',
+  'Key Issue Relevance',
+  'Key Issue Curriculum Mapping',
+  'Explanation',
+  'Assessment',
+  'Management',
+  'Application',
+  'Reference Labels',
+  'Reference URLs',
+  'Creation Date',
+]
+
+// Returns the canonical headings the parser DIDN'T find in the source.
+// Compared case-insensitively against parsed heading text. Exact-form is
+// preferred for the warning message so the user knows what's expected.
+export function findMissingCanonicalHeadings(sections: ParsedSection[]): string[] {
+  const present = new Set(sections.map(s => s.heading.toLowerCase()))
+  return CANONICAL_SCA_HEADINGS.filter(h => !present.has(h.toLowerCase()))
+}
 
 export function projectSectionsToRows(
   sections: ParsedSection[],
