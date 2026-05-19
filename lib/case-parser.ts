@@ -73,21 +73,28 @@ export function parseMarkdownToSections(markdown: string): ParsedSection[] {
   }
 
   for (const line of lines) {
-    // Match "## Heading text" (two hashes only — single-hash is the doc title).
+    // Case 1: explicit "## Heading text" — strip wrapping bold/italic that
+    // mammoth puts inside the heading and canonicalise via wording match.
     const m = line.match(/^##\s+(.+?)\s*$/)
     if (m) {
       flush()
-      // Strip wrapping bold/italic markdown that mammoth emits when a heading
-      // paragraph also has bold runs inside it ("## __Patient Name__" or
-      // "## **Patient Name**"). Also unescape mammoth's defensive backslash
-      // escaping ("Data Gathering\: Positive…" → "Data Gathering: Positive…")
-      // so the heading text matches the canonical name we look up in
-      // KNOWN_LIST_FIELDS and in the Airtable schema.
       currentHeading = cleanHeadingText(m[1])
       currentBody = []
-    } else if (currentHeading !== null) {
-      currentBody.push(line)
+      continue
     }
+    // Case 2: standalone line whose wording matches a canonical SCA heading
+    // (e.g. mammoth couldn't recognise the paragraph as a Heading 2 because
+    // the style name was lowercased, so it emits the heading as just bold
+    // body text). Matching purely on wording means we recover the section
+    // regardless of how it was formatted in the docx.
+    const canonicalHit = canonicaliseHeading(cleanHeadingText(line))
+    if (canonicalHit) {
+      flush()
+      currentHeading = canonicalHit
+      currentBody = []
+      continue
+    }
+    if (currentHeading !== null) currentBody.push(line)
   }
   flush()
 
@@ -95,15 +102,19 @@ export function parseMarkdownToSections(markdown: string): ParsedSection[] {
 }
 
 // Strip wrapping bold/italic markers and unescape mammoth's backslash
-// escaping. Used for both headings (where we want a clean field name) and
-// any text we pull out of the document.
+// escaping. Then, if the cleaned text matches a canonical SCA heading via
+// tolerant normalisation, return the canonical spelling — that way the
+// downstream code (KNOWN_LIST_FIELDS lookup, missing-section warning, UI
+// auto-mapping) all sees the same canonical name regardless of how the
+// docx author wrote it.
 function cleanHeadingText(s: string): string {
-  return unescapeMammothBackslashes(
+  const stripped = unescapeMammothBackslashes(
     s.trim()
       .replace(/^(?:\*\*|__|\*|_)+/, '')
       .replace(/(?:\*\*|__|\*|_)+$/, '')
       .trim(),
   )
+  return canonicaliseHeading(stripped) ?? stripped
 }
 
 // Mammoth's markdown writer escapes special-character punctuation with a
@@ -280,11 +291,33 @@ export const CANONICAL_SCA_HEADINGS: readonly string[] = [
 ]
 
 // Returns the canonical headings the parser DIDN'T find in the source.
-// Compared case-insensitively against parsed heading text. Exact-form is
-// preferred for the warning message so the user knows what's expected.
+// Compared via the same forgiving normalisation we use for matching so that
+// "Explanation:" / "**Explanation**" / "Explanation " all count as present.
 export function findMissingCanonicalHeadings(sections: ParsedSection[]): string[] {
-  const present = new Set(sections.map(s => s.heading.toLowerCase()))
-  return CANONICAL_SCA_HEADINGS.filter(h => !present.has(h.toLowerCase()))
+  const present = new Set(sections.map(s => normaliseForMatch(s.heading)))
+  return CANONICAL_SCA_HEADINGS.filter(h => !present.has(normaliseForMatch(h)))
+}
+
+// Normalise a string for tolerant heading matching: lowercase, drop every
+// non-alphanumeric character, collapse spaces. This lets "Explanation",
+// "Explanation:", "**Explanation**", "  Explanation  ", and "Explanation."
+// all hash to the same key — which is what we want for both the canonical
+// heading lookup and the auto-mapping step against the Airtable field
+// names.
+export function normaliseForMatch(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+// Look up an arbitrary heading string against the canonical SCA heading
+// list using tolerant normalisation. Returns the canonical spelling
+// ("Explanation") for any reasonable variant the source might have used.
+function canonicaliseHeading(s: string): string | null {
+  const key = normaliseForMatch(s)
+  if (!key) return null
+  for (const canonical of CANONICAL_SCA_HEADINGS) {
+    if (normaliseForMatch(canonical) === key) return canonical
+  }
+  return null
 }
 
 // Promote text lines that visually look like SCA headings (because the
