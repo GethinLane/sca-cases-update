@@ -51,8 +51,35 @@ WHAT "DROP-IN REPLACEMENT" MEANS
 - Do NOT write meta-instructions ("change X to Y", "remove the bit about Z"…).
 - Do NOT describe what to change — perform the change and provide the prose.
 - Do NOT truncate. The output must be a full, finished replacement.
-- Match the cell's existing style: complete sentences, bullets, markdown, etc.
-- Airtable rich text supports **bold**, *italic*, - bullets, 1. lists. \`####\` is NOT rendered as a heading; keep it literal if present.
+- Always write in UK English (e.g. "paediatric", "anaemia", "oesophageal",
+  "haemorrhoid", "behaviour", "centre", "organisation", "tumour"…). Never
+  US spellings.
+
+═══════════════════════════════════════════════════════════════════════
+PER-FIELD FORMATTING RULES — READ CAREFULLY, THESE OVERRIDE "MATCH THE STYLE"
+═══════════════════════════════════════════════════════════════════════
+Only TWO fields are allowed to contain any markdown formatting:
+  • "Assessment"
+  • "Management"
+For those two fields, Airtable rich text supports **bold**, *italic*,
+- bullets, and 1. numbered lists. \`####\` is NOT rendered as a heading;
+keep it literal if present.
+
+EVERY OTHER FIELD must be PLAIN PROSE with NO markdown of any kind:
+no **bold**, no *italic*, no bullet points (- or *), no numbered lists,
+no \`backticks\`, no headings, no horizontal rules. Just sentences.
+
+Specifically for the "Application" field:
+  • ONE paragraph only — no line breaks, no lists, no sub-sections.
+  • UK English.
+  • Concise — keep it tight, do not pad it out.
+  • Zero markdown characters. Plain prose only.
+
+If the existing cell content for a non-Assessment/Management field already
+contains markdown, that is a bug in the source data — your rewrite must
+still strip it and return clean plain prose. Do NOT preserve markdown in
+fields other than Assessment and Management, no matter what the existing
+style looks like.
 
 ═══════════════════════════════════════════════════════════════════════
 PER-CELL OUTPUT

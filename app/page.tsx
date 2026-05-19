@@ -215,16 +215,14 @@ export default function Dashboard() {
   }
 
   function openInOutlook(to: string, subject: string, body: string) {
-    // Outlook Web App compose deeplink. Opens whichever mailbox is signed in
-    // (intended: info@scarevision.co.uk). Falls back to mailto: if the user
-    // isn't signed in — both work.
-    const params = new URLSearchParams({
-      to,
-      subject,
-      body,
-    })
-    const url = `https://outlook.office.com/mail/deeplink/compose?${params.toString()}`
-    window.open(url, '_blank', 'noopener,noreferrer')
+    // mailto: routes through the OS's configured mail handler (Outlook Web,
+    // Outlook desktop, Apple Mail, etc.). The outlook.office.com compose
+    // deeplink is unreliable about populating subject/body across tenants,
+    // so we use the standard mailto: protocol with explicit URL encoding
+    // (encodeURIComponent gives %20 for spaces; URLSearchParams gives + which
+    // some mail handlers render literally).
+    const qs = `subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+    window.location.href = `mailto:${encodeURIComponent(to)}?${qs}`
   }
 
   async function generateRewrites(item: FeedbackItem) {
@@ -866,7 +864,7 @@ export default function Dashboard() {
                                   ? 'No contact email on the feedback row'
                                   : noContact
                                   ? 'Submitter did not request contact'
-                                  : `Open Outlook Web compose to ${to} (sends from your signed-in mailbox, e.g. info@scarevision.co.uk)`
+                                  : `Open your default mail client (e.g. Outlook Web) with a draft to ${to} pre-filled`
                               }
                             >
                               ✉ Open in Outlook
@@ -923,10 +921,12 @@ export default function Dashboard() {
                           />
                         </div>
                         <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
-                          Edit the subject and body above. "Open in Outlook" launches
-                          Outlook Web compose with this email pre-filled — make sure
-                          you're signed in as <strong>info@scarevision.co.uk</strong> so it
-                          sends from the right mailbox.
+                          Edit the subject and body above. "Open in Outlook" hands the
+                          draft to your default mail client (Outlook Web, if that's how
+                          your browser is configured) with the subject and body
+                          pre-filled — make sure you're signed in as{' '}
+                          <strong>info@scarevision.co.uk</strong> so it sends from the
+                          right mailbox.
                         </p>
                       </div>
                     )
