@@ -26,6 +26,16 @@ const KNOWN_LIST_FIELDS = new Set<string>([
   'Notes Entry Content',
   'Test Results Label',
   'Test Results Content',
+  // History / role-player narrative blocks — each paragraph in the source
+  // is a separate "fact" that maps to its own Airtable row. Confirmed by
+  // user 2026-05: "we need separate paragraphs to go into separate rows
+  // for the history section, like the social history, free information,
+  // information if divulged…".
+  'Information Divulged Freely',
+  'Information Divulged Only If Asked',
+  'PMH / Medications / Allergies (Role Player Version)',
+  'Social History',
+  'Family History',
   'Data Gathering: Positive Indicators',
   'Data Gathering: Negative Indicators',
   'Clinical Management: Positive Indicators',
