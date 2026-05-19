@@ -47,7 +47,8 @@ Fill the JSON fields in this logical order. The verdict is DERIVED from the fiel
   5. verdictSelfCheck  → mechanical check: count flaggedCells, flag summary language, pick rule
   6. verdict           → MUST follow from verdictSelfCheck.verdictRule
   7. verdictReason     → explain in plain English
-  8. emailResponse     → draft reply (or "No contact requested")
+  8. emailSubject      → subject line for the reply (or "No contact requested")
+  9. emailResponse     → draft reply body (or "No contact requested")
 
 ═══════════════════════════════════════════════════════════════════════
 WHAT "VERDICT" MEANS
@@ -115,7 +116,17 @@ EMAIL TONE
 - If they were right, credit them. If wrong, be kind — "I can see why you'd think that, but when we checked..."
 - 4-8 sentences. Sign off as "The SCA Revision Team".
 - Avoid: "I want to assure you", "Please do not hesitate", "We value your contribution", "Rest assured", "Your input is invaluable".
-- If no contact was requested, emailResponse must be exactly: "No contact requested".`
+
+═══════════════════════════════════════════════════════════════════════
+EMAIL SUBJECT
+═══════════════════════════════════════════════════════════════════════
+- Format: "Re: Case <N> feedback — <short clinical topic>".
+  e.g. "Re: Case 14 feedback — atrial fibrillation management"
+       "Re: Case 7 feedback — childhood asthma stepwise treatment"
+- Keep it under ~80 characters.
+- No emoji, no exclamation marks, no all-caps.
+
+If no contact was requested, set BOTH emailSubject and emailResponse to exactly: "No contact requested".`
 
 interface RequestBody {
   feedbackId?: string
