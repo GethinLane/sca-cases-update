@@ -36,8 +36,11 @@ const SOFT_ROW_WARN = 8      // matches lib/case-parser SOFT_ROW_WARN
 
 // Best-effort guess of which Airtable field a parsed heading maps to. Tries
 // progressively looser matches and returns the strongest hit, or undefined
-// if nothing scores above the fuzzy threshold. The whole auto-map step
-// funnels through this one function so future tweaks happen in one place.
+// if nothing scores above the fuzzy threshold. Designed to handle the
+// real-world case where the user's Airtable schema doesn't use the
+// canonical SCA field names verbatim — schemas tend to use abbreviated
+// names ("DG Positive", "PMH", "RTO Negative") or simpler labels ("Name"
+// instead of "Patient Name").
 function guessFieldForHeading(
   heading: string,
   realFields: readonly string[],
@@ -50,59 +53,140 @@ function guessFieldForHeading(
     if (ice) return ice
   }
 
+  const hLower = heading.toLowerCase()
+  const hNorm = normFieldName(heading)
+  const hExpanded = expandAbbreviations(heading)
+  const hExpandedNorm = normFieldName(hExpanded)
+
   // 1. Exact match.
   if (realFields.includes(heading)) return heading
   // 2. Case-insensitive match.
-  const lcHit = realFields.find(f => f.toLowerCase() === heading.toLowerCase())
+  const lcHit = realFields.find(f => f.toLowerCase() === hLower)
   if (lcHit) return lcHit
-  // 3. Normalised match — strip punctuation/whitespace, lowercase. Catches
-  //    "Data Gathering: Positive Indicators" vs "Data Gathering Positive
-  //    Indicators" and similar punctuation drift between author and schema.
-  const normHeading = normFieldName(heading)
-  const normHit = realFields.find(f => normFieldName(f) === normHeading)
+  // 3. Punctuation-/whitespace-normalised match. "Data Gathering: Positive
+  //    Indicators" vs "Data Gathering Positive Indicators".
+  const normHit = realFields.find(f => normFieldName(f) === hNorm)
   if (normHit) return normHit
-  // 4. Hand-curated synonym table for common shorthand.
-  const synHit = SYNONYM_MAP[heading.toLowerCase()]
+  // 4. Abbreviation-expanded match. Tries both sides expanded so
+  //    "Data Gathering: Positive Indicators" matches an Airtable field
+  //    called "DG Positive", "DG Pos Indicators", or "DG Positive Ind".
+  const expandHit = realFields.find(
+    f => normFieldName(expandAbbreviations(f)) === hExpandedNorm,
+  )
+  if (expandHit) return expandHit
+  // 5. Hand-curated synonym lookup for short common shorthands.
+  const synHit = SYNONYM_MAP[hLower]
   if (synHit) {
     const real = realFields.find(f => f.toLowerCase() === synHit.toLowerCase())
     if (real) return real
   }
-  // 5. Token-set fuzzy match. Jaccard similarity of lowercased alphanumeric
-  //    token sets (stopwords dropped). Catches cases where the heading and
-  //    the field share most of the same significant words but have extras
-  //    or reordering. Threshold tuned by hand: 0.55 catches "Past Medical
-  //    History" vs "Patient Past Medical Hx" but not random short
-  //    coincidences like "Age" vs "Patient Age".
-  const headingTokens = tokenise(heading)
-  if (headingTokens.size === 0) return undefined
+  // 6. Token-set fuzzy match using EXPANDED tokens on both sides. Score
+  //    blends three signals:
+  //      - Jaccard            |∩| / |∪|       — overall word overlap
+  //      - Heading coverage   |∩| / |H| × .85 — how much of heading is in field
+  //      - Field coverage     |∩| / |F| × w   — how much of field is in heading
+  //                                              (w grows with field length so
+  //                                              longer better-matching fields
+  //                                              outscore short generic ones)
+  //    + 0.05 bonus if the heading's LAST significant token is in the
+  //      field — that's the distinguishing word for pairs like "Notes
+  //      Entry Label" vs "Notes Entry Content".
+  const headingTokensArr = tokeniseExpandedOrdered(heading)
+  if (headingTokensArr.length === 0) return undefined
+  const headingTokens = new Set(headingTokensArr)
+  const headingLastWord = headingTokensArr[headingTokensArr.length - 1]
   let best: { field: string; score: number } | undefined
   for (const f of realFields) {
-    const fTokens = tokenise(f)
+    const fTokens = tokeniseExpanded(f)
     if (fTokens.size === 0) continue
-    // Set iteration via .forEach() — avoids the ES5-target spread-on-Set
-    // restriction (the tsconfig targets es5; spread-on-Set would force a
-    // downlevelIteration flag). Computing |intersection| + |union| from
-    // sizes is cheaper than building two new Sets anyway.
-    let intersectionSize = 0
-    headingTokens.forEach(t => { if (fTokens.has(t)) intersectionSize++ })
-    const unionSize = headingTokens.size + fTokens.size - intersectionSize
-    if (unionSize === 0) continue
-    const score = intersectionSize / unionSize
+    let inter = 0
+    headingTokens.forEach(t => { if (fTokens.has(t)) inter++ })
+    if (inter === 0) continue
+    const unionSize = headingTokens.size + fTokens.size - inter
+    const jaccard = inter / unionSize
+    const headingCov = inter / headingTokens.size
+    const fieldCov = inter / fTokens.size
+    // fieldWeight scales with field length so a long fully-contained
+    // field outscores a short generic one ("PMH Meds Allergies"
+    // outranks bare "PMH" when the heading mentions all three).
+    const fieldWeight = Math.min(1.0, 0.5 + fTokens.size * 0.1)
+    let score = Math.max(jaccard, headingCov * 0.85, fieldCov * fieldWeight)
+    if (headingLastWord && fTokens.has(headingLastWord)) score += 0.05
     if (!best || score > best.score) best = { field: f, score }
   }
-  if (best && best.score >= 0.55) return best.field
+  // Threshold 0.5. Combined with the coverage + last-word bonus this
+  // catches "Patient Name" → "Name", "Notes Entry Content" → "Notes
+  // Content", "Data Gathering: Positive Indicators" → "DG Positive",
+  // while still rejecting unrelated short fields (zero intersection
+  // scores 0, ruled out before scoring even runs).
+  if (best && best.score >= 0.5) return best.field
   return undefined
+}
+
+function tokeniseExpandedOrdered(s: string): string[] {
+  const STOP = new Set(['the', 'a', 'an', 'of', 'and', 'or', 'for', 'to', 'in', 'on', 'with'])
+  const out: string[] = []
+  const seen = new Set<string>()
+  const tokens = expandAbbreviations(s).toLowerCase().split(/[^a-z0-9]+/)
+  for (const t of tokens) {
+    if (!t || STOP.has(t) || seen.has(t)) continue
+    seen.add(t)
+    out.push(t)
+  }
+  return out
 }
 
 function normFieldName(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
+function tokeniseExpanded(s: string): Set<string> {
+  return tokenise(expandAbbreviations(s))
+}
+
 function tokenise(s: string): Set<string> {
-  const STOP = new Set(['the', 'a', 'an', 'of', 'and', 'or', 'for', 'to'])
+  const STOP = new Set(['the', 'a', 'an', 'of', 'and', 'or', 'for', 'to', 'in', 'on', 'with'])
   return new Set(
     s.toLowerCase().split(/[^a-z0-9]+/).filter(t => t && !STOP.has(t)),
   )
+}
+
+// Whole-word expansion of common SCA / clinical shorthand. Conservative —
+// only items unambiguous in this domain. Applied to both the parsed
+// heading and the Airtable field name before token-set comparison, so
+// either side using the abbreviated form still matches.
+const ABBREVIATION_EXPANSIONS: Record<string, string> = {
+  'dg': 'data gathering',
+  'cm': 'clinical management',
+  'mgmt': 'management',
+  'rto': 'relating to others',
+  'ki': 'key issue',
+  'pos': 'positive',
+  'neg': 'negative',
+  'ind': 'indicators',
+  'pmh': 'past medical history',
+  'meds': 'medications',
+  'med': 'medications',
+  'fh': 'family history',
+  'sh': 'social history',
+  'shx': 'social history',
+  'hx': 'history',
+  'pt': 'patient',
+  'rp': 'role player',
+  'ref': 'reference',
+  'refs': 'references',
+  'expln': 'explanation',
+  'mgt': 'management',
+  'rtla': 'relating to others',
+}
+
+function expandAbbreviations(s: string): string {
+  let result = s
+  for (const abbr of Object.keys(ABBREVIATION_EXPANSIONS)) {
+    const full = ABBREVIATION_EXPANSIONS[abbr]
+    result = result.replace(new RegExp(`\\b${abbr}\\b`, 'gi'), full)
+  }
+  return result
 }
 
 const SYNONYM_MAP: Record<string, string> = {

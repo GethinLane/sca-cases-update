@@ -73,9 +73,10 @@ export function parseMarkdownToSections(markdown: string): ParsedSection[] {
   }
 
   for (const line of lines) {
-    // Case 1: explicit "## Heading text" — strip wrapping bold/italic that
+    // Case 1: any markdown heading "#", "##", "###" — we don't care which
+    // level mammoth chose for SCA fields. Strip wrapping bold/italic that
     // mammoth puts inside the heading and canonicalise via wording match.
-    const m = line.match(/^##\s+(.+?)\s*$/)
+    const m = line.match(/^#+\s+(.+?)\s*$/)
     if (m) {
       flush()
       currentHeading = cleanHeadingText(m[1])
@@ -157,8 +158,16 @@ function buildSection(rawHeading: string, body: string): ParsedSection | null {
 
   // Skip placeholder "(blank)" headings that mark empty rows in the source.
   if (/^\(blank\)$/i.test(heading)) return null
-  // Skip empty bodies entirely.
-  if (!body) return null
+  // Empty body — keep the section ONLY if its heading is canonical, so the
+  // section still surfaces in the UI (with an empty row) and the user knows
+  // it's there. Drops empty non-canonical sections (almost always conversion
+  // noise — random bolded paragraphs, blank Word styles, etc.).
+  if (!body) {
+    const isCanonical = CANONICAL_SCA_HEADINGS.some(
+      h => normaliseForMatch(h) === normaliseForMatch(heading),
+    )
+    if (!isCanonical) return null
+  }
 
   // ICE: <Subsection> — pin to a specific row of the ICE field.
   const iceMatch = heading.match(/^ICE\s*:\s*(.+)$/i)
