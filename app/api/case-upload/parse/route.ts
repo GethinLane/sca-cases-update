@@ -16,32 +16,21 @@ export const maxDuration = 60
 
 const MAX_BYTES = 5 * 1024 * 1024  // 5 MB — defensive cap, real cases are ~30 KB
 
-// Mammoth's default style map matches paragraphs by style NAME ("Heading 2"
-// with a capital H). Real .docx files in the wild often store the style
-// name with different casing (we've seen "heading 2" lowercase), even when
-// the style ID is the canonical "Heading2". When that happens mammoth's
-// default rules don't fire and every heading paragraph comes through as
-// plain prose, which is a disaster for our parser. Match by style-id too so
-// we catch both spellings. NormalWeb (a common style on text pasted from a
-// web page) is mapped to a plain paragraph so it doesn't trigger a noisy
-// "Unrecognised paragraph style" warning.
+// mammoth's style-map DSL only supports `style-name` in attribute
+// selectors — `[style-id='…']` raises "Expected identifier 'style-name'".
+// mammoth's default map already covers the standard "Heading 1" / "Heading 2"
+// style names, and is lenient enough to catch the docx the user uploaded
+// (whose style name was "heading 2", lowercase). We add belt-and-braces
+// lowercase variants here, and explicitly map "Normal (Web)" so the
+// web-paste paragraphs don't trigger a noisy "Unrecognised paragraph style"
+// warning every time.
 const MAMMOTH_STYLE_MAP = [
-  "p[style-id='Heading1'] => h1:fresh",
-  "p[style-id='Heading2'] => h2:fresh",
-  "p[style-id='Heading3'] => h3:fresh",
-  "p[style-id='Heading4'] => h4:fresh",
-  "p[style-id='Heading5'] => h5:fresh",
-  "p[style-id='Heading6'] => h6:fresh",
-  "p[style-id='Title'] => h1:fresh",
-  // Lowercase style-name variants in case style ID isn't canonical either.
   "p[style-name='heading 1'] => h1:fresh",
   "p[style-name='heading 2'] => h2:fresh",
   "p[style-name='heading 3'] => h3:fresh",
   "p[style-name='heading 4'] => h4:fresh",
   "p[style-name='heading 5'] => h5:fresh",
   "p[style-name='heading 6'] => h6:fresh",
-  // Don't warn on web-paste paragraphs — just treat them as normal prose.
-  "p[style-id='NormalWeb'] => p:fresh",
   "p[style-name='Normal (Web)'] => p:fresh",
 ].join('\n')
 
