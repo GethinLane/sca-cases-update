@@ -135,3 +135,40 @@ Scans a day of bot conversations for recurring patient questions where the bot h
 **Optional env overrides:**
 - `TRANSCRIPTS_OPENAI_MODEL` — default `gpt-5.4`
 - `OPENAI_TRANSCRIPTS_EFFORT` — default `medium` (set `low` for speed, `high` for tougher cases)
+
+---
+
+## Case Uploader (`/upload-case`)
+
+Drops in a `.md` or `.docx` SCA case and writes it to an existing "Case N"
+table in the Cases base. Each `## Heading` becomes an Airtable field; lists
+under that heading become row 1, row 2, … up to 8 rows.
+
+**How it works:**
+1. Upload a `.md` (numbered-list style) or `.docx` (Heading 2 + paragraph
+   style). `.docx` is converted to markdown server-side with
+   [`mammoth`](https://www.npmjs.com/package/mammoth).
+2. `lib/case-parser.ts` splits on `##` headings. Bodies of fields known to
+   be multi-row (Past Medical History, Notes Entry Label/Content, Positive
+   / Negative Indicators, Key Issues, Reference Labels/URLs, …) are split
+   into ordered items — item N becomes row N. Source order is preserved
+   strictly: the top three Positive Indicators carry more weighting and
+   MUST land in rows 1-3.
+3. `## ICE: Ideas` / `Concerns` / `Expectations` are special-cased: they
+   all write to the `ICE` field, into rows 1, 2 and 3 respectively.
+4. The target-table dropdown is populated via the Airtable Metadata API
+   (`schema.bases:read`, already on `AIRTABLE_TOKEN`). Real field names on
+   the chosen table become the source of truth — anything the parser
+   couldn't auto-match is surfaced as "Unmapped" and you map it via a
+   dropdown.
+5. Per-item textareas let you tweak before writing. "Upload section"
+   writes one section at a time (handy for fixing a single mis-mapped
+   field); "Upload all" creates the full set of rows in one batch.
+
+**Requires:**
+- An existing "Case N" table in the Cases base. The uploader does **not**
+  create tables — pre-create the empty table in Airtable first. (Adding
+  `schema.bases:write` to `AIRTABLE_CASES_WRITE_TOKEN` would let us
+  auto-create, but the current write token is intentionally narrower.)
+- `AIRTABLE_CASES_WRITE_TOKEN` (already required for the per-cell feedback
+  apply flow).

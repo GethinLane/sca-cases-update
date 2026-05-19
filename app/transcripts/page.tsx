@@ -267,6 +267,7 @@ export default function TranscriptsPage() {
             <Link href="/" className={styles.navLink}>Feedback Review</Link>
             <Link href="/audit" className={styles.navLink}>Guideline Audit</Link>
             <Link href="/transcripts" className={`${styles.navLink} ${styles.navLinkActive}`}>Transcript Insights</Link>
+            <Link href="/upload-case" className={styles.navLink}>Case Uploader</Link>
           </nav>
         </div>
       </header>
