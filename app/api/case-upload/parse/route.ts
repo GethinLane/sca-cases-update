@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   parseMarkdownToSections,
   findMissingCanonicalHeadings,
+  promoteCanonicalHeadings,
   type ParsedSection,
 } from '@/lib/case-parser'
 
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
   const name = (file.name || '').toLowerCase()
   let markdown: string
   let conversionWarnings: string[] = []
+  let promotedHeadings: string[] = []
 
   if (name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.txt')) {
     markdown = await file.text()
@@ -62,6 +64,13 @@ export async function POST(req: NextRequest) {
           .filter(Boolean)
           .slice(0, 20)
       }
+      // Recover canonical headings that were hand-formatted (bold + large
+      // font) rather than tagged with Word's "Heading 2" style. mammoth
+      // can't see those as headings, so they'd otherwise get absorbed into
+      // the previous section.
+      const promotion = promoteCanonicalHeadings(markdown)
+      markdown = promotion.markdown
+      promotedHeadings = promotion.promotedHeadings
     } catch (err: any) {
       return NextResponse.json(
         { error: `docx → markdown conversion failed: ${err?.message ?? err}` },
@@ -103,6 +112,7 @@ export async function POST(req: NextRequest) {
     sections,
     conversionWarnings,
     missingCanonicalHeadings,
+    promotedHeadings,
     sourceMarkdownLength: markdown.length,
   })
 }

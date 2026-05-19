@@ -200,6 +200,50 @@ export function findMissingCanonicalHeadings(sections: ParsedSection[]): string[
   return CANONICAL_SCA_HEADINGS.filter(h => !present.has(h.toLowerCase()))
 }
 
+// Promote text lines that visually look like SCA headings (because the
+// author bold/large-formatted them by hand instead of using Word's
+// "Heading 2" style) into actual markdown ## headings. mammoth only
+// recognises Word's built-in heading styles, so anything hand-formatted
+// comes out as plain text and gets vacuumed up into the previous section.
+//
+// We only promote lines whose text EXACTLY matches a canonical SCA heading
+// (case-insensitive, after stripping any bold/italic markdown emphasis
+// mammoth wraps around them). That avoids false positives — random body
+// prose won't accidentally match a 30+ character heading like
+// "Data Gathering: Positive Indicators".
+//
+// Returns the new markdown and the list of headings that were promoted so
+// the UI can surface "we recovered N headings that weren't properly styled".
+export function promoteCanonicalHeadings(markdown: string): {
+  markdown: string
+  promotedHeadings: string[]
+} {
+  const canonicalByLower = new Map(
+    CANONICAL_SCA_HEADINGS.map(h => [h.toLowerCase(), h]),
+  )
+  // Also recognise the "ICE: X" pattern even if X isn't strictly canonical.
+  const lines = markdown.split('\n')
+  const promoted: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (/^#+\s/.test(line.trim())) continue        // already a markdown heading
+    // Strip any wrapping bold/italic emphasis mammoth might apply when
+    // converting a bold paragraph.
+    const stripped = line
+      .trim()
+      .replace(/^(?:\*\*|__|\*|_)+/, '')
+      .replace(/(?:\*\*|__|\*|_)+$/, '')
+      .trim()
+    if (!stripped) continue
+    const hit = canonicalByLower.get(stripped.toLowerCase())
+    if (hit) {
+      lines[i] = `## ${hit}`
+      promoted.push(hit)
+    }
+  }
+  return { markdown: lines.join('\n'), promotedHeadings: promoted }
+}
+
 export function projectSectionsToRows(
   sections: ParsedSection[],
   headingToField: Record<string, string>,  // heading → real Airtable field name

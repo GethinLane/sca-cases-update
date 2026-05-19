@@ -43,6 +43,7 @@ export default function CaseUploaderPage() {
   const [parseError, setParseError] = useState<string | null>(null)
   const [conversionWarnings, setConversionWarnings] = useState<string[]>([])
   const [missingHeadings, setMissingHeadings] = useState<string[]>([])
+  const [promotedHeadings, setPromotedHeadings] = useState<string[]>([])
   const [sections, setSections] = useState<ParsedSection[]>([])
 
   // heading → real Airtable field name. Empty string means "don't write".
@@ -148,6 +149,7 @@ export default function CaseUploaderPage() {
     setParseError(null)
     setConversionWarnings([])
     setMissingHeadings([])
+    setPromotedHeadings([])
     setSections([])
     setMapping({})
     setEdits({})
@@ -163,6 +165,7 @@ export default function CaseUploaderPage() {
       setSections(Array.isArray(data.sections) ? data.sections : [])
       setConversionWarnings(Array.isArray(data.conversionWarnings) ? data.conversionWarnings : [])
       setMissingHeadings(Array.isArray(data.missingCanonicalHeadings) ? data.missingCanonicalHeadings : [])
+      setPromotedHeadings(Array.isArray(data.promotedHeadings) ? data.promotedHeadings : [])
     } catch (err: any) {
       setParseError(err?.message ?? String(err))
     } finally {
@@ -344,6 +347,18 @@ export default function CaseUploaderPage() {
               <summary>{conversionWarnings.length} conversion warning(s) from mammoth</summary>
               <ul style={{ margin: '6px 0 0 16px' }}>
                 {conversionWarnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            </details>
+          )}
+          {promotedHeadings.length > 0 && (
+            <details className={`${styles.flash} ${styles.flashOk}`}>
+              <summary>
+                Recovered <strong>{promotedHeadings.length}</strong> heading(s) that
+                were hand-formatted in Word (bold + large font) instead of using the
+                "Heading 2" style — parsed as section headings anyway
+              </summary>
+              <ul style={{ margin: '6px 0 0 16px' }}>
+                {promotedHeadings.map(h => <li key={h}>{h}</li>)}
               </ul>
             </details>
           )}
