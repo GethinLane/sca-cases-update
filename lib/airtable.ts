@@ -224,6 +224,77 @@ export async function getCaseFieldValue(
   }
 }
 
+// ─── Cases base — Metadata API + batch create for case uploader ────
+// The Metadata API needs the schema.bases:read scope, which the default
+// AIRTABLE_TOKEN already has. Used by /upload-case to populate the
+// target-table picker and to validate the heading→field mapping.
+
+export interface CaseTableSummary {
+  id: string
+  name: string         // e.g. "Case 367"
+  fieldNames: string[] // ordered list of field names declared on the table
+}
+
+export async function listCaseTables(): Promise<CaseTableSummary[]> {
+  const url = `${AT_BASE}/meta/bases/${CASES_BASE_ID}/tables`
+  const data = await airtableFetch(url)
+  const tables = Array.isArray(data.tables) ? data.tables : []
+  return tables
+    .filter((t: any) => typeof t?.name === 'string' && /^Case\b/i.test(t.name))
+    .map((t: any) => ({
+      id: String(t.id),
+      name: String(t.name),
+      fieldNames: Array.isArray(t.fields)
+        ? t.fields.map((f: any) => String(f?.name ?? '')).filter(Boolean)
+        : [],
+    }))
+    // Sort by trailing number where possible so "Case 9" < "Case 10".
+    .sort((a: CaseTableSummary, b: CaseTableSummary) => {
+      const an = parseInt(a.name.replace(/^Case\s*/i, ''), 10)
+      const bn = parseInt(b.name.replace(/^Case\s*/i, ''), 10)
+      if (Number.isFinite(an) && Number.isFinite(bn)) return an - bn
+      return a.name.localeCompare(b.name)
+    })
+}
+
+// Create one or more rows in a Case table. Airtable caps batch creates at 10
+// records per call, so we chunk and add a small inter-batch delay to stay
+// under the 5 req/sec limit.
+export async function createCaseRecords(
+  tableName: string,
+  rows: Array<Record<string, string>>,
+): Promise<{ created: number; recordIds: string[]; errors: string[] }> {
+  const token = getCasesWriteToken()
+  const encoded = encodeURIComponent(tableName)
+  const url = `${AT_BASE}/${CASES_BASE_ID}/${encoded}`
+
+  const errors: string[] = []
+  const recordIds: string[] = []
+  let created = 0
+
+  for (let i = 0; i < rows.length; i += 10) {
+    const chunk = rows.slice(i, i + 10).map(fields => ({ fields }))
+    try {
+      // typecast: false — surface schema mismatches loudly rather than
+      // silently dropping fields. Caller has already mapped headings to real
+      // field names via the Metadata API, so a mismatch is a real bug.
+      const res = await airtablePost(url, { records: chunk, typecast: false }, token)
+      const created_records = Array.isArray(res.records) ? res.records : []
+      created += created_records.length
+      for (const r of created_records) {
+        if (r?.id) recordIds.push(String(r.id))
+      }
+    } catch (err: any) {
+      errors.push(err?.message ?? String(err))
+    }
+    if (i + 10 < rows.length) {
+      await new Promise(r => setTimeout(r, 300))
+    }
+  }
+
+  return { created, recordIds, errors }
+}
+
 export async function getFeedbackById(feedbackId: string): Promise<FeedbackRow | null> {
   const encoded = encodeURIComponent('User Feedback')
   const url = `${AT_BASE}/${FEEDBACK_BASE_ID}/${encoded}/${feedbackId}`

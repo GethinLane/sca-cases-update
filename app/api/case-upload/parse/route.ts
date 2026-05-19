@@ -1,0 +1,101 @@
+// app/api/case-upload/parse/route.ts
+// Accepts a .md or .docx upload, returns ParsedSection[]. For .docx, mammoth
+// converts to markdown server-side first; both formats then go through the
+// same case-parser.
+
+import { NextRequest, NextResponse } from 'next/server'
+import { parseMarkdownToSections, type ParsedSection } from '@/lib/case-parser'
+
+export const runtime = 'nodejs'
+export const maxDuration = 60
+
+const MAX_BYTES = 5 * 1024 * 1024  // 5 MB — defensive cap, real cases are ~30 KB
+
+export async function POST(req: NextRequest) {
+  let form: FormData
+  try {
+    form = await req.formData()
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: `Could not read multipart upload: ${err?.message ?? err}` },
+      { status: 400 },
+    )
+  }
+
+  const file = form.get('file')
+  if (!(file instanceof File)) {
+    return NextResponse.json({ error: 'Missing "file" upload' }, { status: 400 })
+  }
+  if (file.size > MAX_BYTES) {
+    return NextResponse.json(
+      { error: `File too large (${file.size} bytes). Max ${MAX_BYTES}.` },
+      { status: 413 },
+    )
+  }
+
+  const name = (file.name || '').toLowerCase()
+  let markdown: string
+  let conversionWarnings: string[] = []
+
+  if (name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.txt')) {
+    markdown = await file.text()
+  } else if (name.endsWith('.docx')) {
+    try {
+      // Lazy-import mammoth so the markdown-only path doesn't pay the cost.
+      // esModuleInterop is on, so the namespace import gives us the named
+      // convertToMarkdown function directly.
+      const mammoth: any = await import('mammoth')
+      const convertToMarkdown = mammoth.convertToMarkdown ?? mammoth.default?.convertToMarkdown
+      if (typeof convertToMarkdown !== 'function') {
+        throw new Error('mammoth.convertToMarkdown not available — is the package installed?')
+      }
+      const buffer = Buffer.from(await file.arrayBuffer())
+      const result = await convertToMarkdown({ buffer })
+      markdown = typeof result?.value === 'string' ? result.value : ''
+      if (Array.isArray(result?.messages)) {
+        conversionWarnings = result.messages
+          .map((m: any) => (typeof m?.message === 'string' ? m.message : ''))
+          .filter(Boolean)
+          .slice(0, 20)
+      }
+    } catch (err: any) {
+      return NextResponse.json(
+        { error: `docx → markdown conversion failed: ${err?.message ?? err}` },
+        { status: 500 },
+      )
+    }
+  } else {
+    return NextResponse.json(
+      { error: `Unsupported file type "${file.name}". Use .md or .docx.` },
+      { status: 415 },
+    )
+  }
+
+  if (!markdown.trim()) {
+    return NextResponse.json(
+      { error: 'Uploaded file appears to be empty or could not be read as text.' },
+      { status: 400 },
+    )
+  }
+
+  const sections: ParsedSection[] = parseMarkdownToSections(markdown)
+
+  if (sections.length === 0) {
+    return NextResponse.json(
+      {
+        error:
+          'No "## Heading" sections found in the document. The parser expects ' +
+          'each field to be a level-2 heading (## Patient Name, etc.) — or a Word ' +
+          '"Heading 2" style if uploading a .docx.',
+        conversionWarnings,
+      },
+      { status: 422 },
+    )
+  }
+
+  return NextResponse.json({
+    sections,
+    conversionWarnings,
+    sourceMarkdownLength: markdown.length,
+  })
+}

@@ -11,7 +11,8 @@
     "next": "latest",
     "react": "^18",
     "react-dom": "^18",
-    "@vercel/blob": "latest"
+    "@vercel/blob": "latest",
+    "mammoth": "^1.8.0"
   },
   "devDependencies": {
     "@types/node": "^20",
