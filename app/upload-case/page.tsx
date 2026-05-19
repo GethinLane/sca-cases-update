@@ -79,9 +79,15 @@ function guessFieldForHeading(
   for (const f of realFields) {
     const fTokens = tokenise(f)
     if (fTokens.size === 0) continue
-    const intersection = new Set([...headingTokens].filter(t => fTokens.has(t)))
-    const union = new Set([...headingTokens, ...fTokens])
-    const score = intersection.size / union.size
+    // Set iteration via .forEach() — avoids the ES5-target spread-on-Set
+    // restriction (the tsconfig targets es5; spread-on-Set would force a
+    // downlevelIteration flag). Computing |intersection| + |union| from
+    // sizes is cheaper than building two new Sets anyway.
+    let intersectionSize = 0
+    headingTokens.forEach(t => { if (fTokens.has(t)) intersectionSize++ })
+    const unionSize = headingTokens.size + fTokens.size - intersectionSize
+    if (unionSize === 0) continue
+    const score = intersectionSize / unionSize
     if (!best || score > best.score) best = { field: f, score }
   }
   if (best && best.score >= 0.55) return best.field
