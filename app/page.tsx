@@ -144,6 +144,7 @@ export default function Dashboard() {
   const [rewrites, setRewrites] = useState<Record<string, RewritesState>>({})
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [copied, setCopied] = useState<Record<string, boolean>>({})
+  const [outlookBodyCopied, setOutlookBodyCopied] = useState<Record<string, boolean>>({})
   const [extraContext, setExtraContext] = useState<Record<string, string>>({})
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [scope, setScope] = useState<Record<string, 'flagged-only' | 'whole-case'>>({})
@@ -214,14 +215,18 @@ export default function Dashboard() {
     }
   }
 
-  function openInOutlook(to: string, subject: string, body: string) {
-    // mailto: routes through the OS's configured mail handler (Outlook Web,
-    // Outlook desktop, Apple Mail, etc.). The outlook.office.com compose
-    // deeplink is unreliable about populating subject/body across tenants,
-    // so we use the standard mailto: protocol with explicit URL encoding
-    // (encodeURIComponent gives %20 for spaces; URLSearchParams gives + which
-    // some mail handlers render literally).
-    const qs = `subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+  function openInOutlook(feedbackId: string, to: string, subject: string, body: string) {
+    // Outlook Web's mailto handler wraps the URL inside an Azure AD OAuth
+    // redirect. If the body is anything more than a sentence or two the
+    // resulting request blows past Azure AD's URL length limit and we get
+    // "AADSTS90015: Requested query string is too long." So: copy the body
+    // to the clipboard up front, then open mailto: with just to + subject
+    // (always short enough to fit). The user pastes the body with one
+    // Cmd/Ctrl+V into the open draft.
+    void navigator.clipboard.writeText(body)
+    setOutlookBodyCopied(s => ({ ...s, [feedbackId]: true }))
+    setTimeout(() => setOutlookBodyCopied(s => ({ ...s, [feedbackId]: false })), 6000)
+    const qs = `subject=${encodeURIComponent(subject)}`
     window.location.href = `mailto:${encodeURIComponent(to)}?${qs}`
   }
 
@@ -857,17 +862,19 @@ export default function Dashboard() {
                             <button
                               className={styles.copyBtn}
                               style={{ background: '#0078d4' }}
-                              onClick={() => openInOutlook(to, subject, body)}
+                              onClick={() => openInOutlook(fid, to, subject, body)}
                               disabled={!to || noContact}
                               title={
                                 !to
                                   ? 'No contact email on the feedback row'
                                   : noContact
                                   ? 'Submitter did not request contact'
-                                  : `Open your default mail client (e.g. Outlook Web) with a draft to ${to} pre-filled`
+                                  : `Copy the body to your clipboard and open a draft to ${to} with the subject pre-filled — paste the body into the new message`
                               }
                             >
-                              ✉ Open in Outlook
+                              {outlookBodyCopied[fid]
+                                ? '✓ Body copied — paste in Outlook'
+                                : '✉ Open in Outlook'}
                             </button>
                           </div>
                         </div>
@@ -921,10 +928,12 @@ export default function Dashboard() {
                           />
                         </div>
                         <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
-                          Edit the subject and body above. "Open in Outlook" hands the
-                          draft to your default mail client (Outlook Web, if that's how
-                          your browser is configured) with the subject and body
-                          pre-filled — make sure you're signed in as{' '}
+                          Edit the subject and body above. "Open in Outlook" copies the
+                          body to your clipboard and opens a new draft to the contact
+                          with the subject pre-filled — paste the body in with
+                          Cmd/Ctrl+V. (Outlook Web's mailto handler can't carry the
+                          full body itself: Azure AD rejects the request as too long.)
+                          Make sure you're signed in as{' '}
                           <strong>info@scarevision.co.uk</strong> so it sends from the
                           right mailbox.
                         </p>
