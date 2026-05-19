@@ -57,7 +57,7 @@ export function parseMarkdownToSections(markdown: string): ParsedSection[] {
 
   const flush = () => {
     if (currentHeading === null) return
-    const body = currentBody.join('\n').trim()
+    const body = unescapeMammothBackslashes(currentBody.join('\n').trim())
     const section = buildSection(currentHeading, body)
     if (section) sections.push(section)
   }
@@ -67,7 +67,13 @@ export function parseMarkdownToSections(markdown: string): ParsedSection[] {
     const m = line.match(/^##\s+(.+?)\s*$/)
     if (m) {
       flush()
-      currentHeading = m[1]
+      // Strip wrapping bold/italic markdown that mammoth emits when a heading
+      // paragraph also has bold runs inside it ("## __Patient Name__" or
+      // "## **Patient Name**"). Also unescape mammoth's defensive backslash
+      // escaping ("Data Gathering\: Positive…" → "Data Gathering: Positive…")
+      // so the heading text matches the canonical name we look up in
+      // KNOWN_LIST_FIELDS and in the Airtable schema.
+      currentHeading = cleanHeadingText(m[1])
       currentBody = []
     } else if (currentHeading !== null) {
       currentBody.push(line)
@@ -76,6 +82,28 @@ export function parseMarkdownToSections(markdown: string): ParsedSection[] {
   flush()
 
   return sections
+}
+
+// Strip wrapping bold/italic markers and unescape mammoth's backslash
+// escaping. Used for both headings (where we want a clean field name) and
+// any text we pull out of the document.
+function cleanHeadingText(s: string): string {
+  return unescapeMammothBackslashes(
+    s.trim()
+      .replace(/^(?:\*\*|__|\*|_)+/, '')
+      .replace(/(?:\*\*|__|\*|_)+$/, '')
+      .trim(),
+  )
+}
+
+// Mammoth's markdown writer escapes special-character punctuation with a
+// leading backslash to prevent accidental markdown formatting in the output
+// (e.g. "e.g." → "e\.g\.", "(text)" → "\(text\)", "self-management" →
+// "self\-management"). These escapes are visual noise when the text is
+// going into an Airtable cell, so we undo them. The replacement is
+// conservative: only un-escape characters mammoth is known to escape.
+function unescapeMammothBackslashes(s: string): string {
+  return s.replace(/\\([\\`*_{}\[\]()#+\-.!|<>])/g, '$1')
 }
 
 function buildSection(rawHeading: string, body: string): ParsedSection | null {
@@ -221,19 +249,12 @@ export function promoteCanonicalHeadings(markdown: string): {
   const canonicalByLower = new Map(
     CANONICAL_SCA_HEADINGS.map(h => [h.toLowerCase(), h]),
   )
-  // Also recognise the "ICE: X" pattern even if X isn't strictly canonical.
   const lines = markdown.split('\n')
   const promoted: string[] = []
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     if (/^#+\s/.test(line.trim())) continue        // already a markdown heading
-    // Strip any wrapping bold/italic emphasis mammoth might apply when
-    // converting a bold paragraph.
-    const stripped = line
-      .trim()
-      .replace(/^(?:\*\*|__|\*|_)+/, '')
-      .replace(/(?:\*\*|__|\*|_)+$/, '')
-      .trim()
+    const stripped = cleanHeadingText(line)
     if (!stripped) continue
     const hit = canonicalByLower.get(stripped.toLowerCase())
     if (hit) {
