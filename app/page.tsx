@@ -48,10 +48,17 @@ interface TriageResult {
   verdict: 'valid' | 'invalid' | 'partial' | 'uncertain'
   verdictReason: string
   flaggedCells: FlaggedCell[]
+  emailSubject: string
   emailResponse: string
   _verification?: Verification
   _meta?: { provider: string; model: string; searchCount: number }
 }
+
+type MarkDoneState =
+  | { status: 'idle' }
+  | { status: 'marking' }
+  | { status: 'done'; markedAt: string }
+  | { status: 'error'; message: string }
 
 interface RewriteEntry {
   recordId: string
@@ -142,6 +149,9 @@ export default function Dashboard() {
   const [scope, setScope] = useState<Record<string, 'flagged-only' | 'whole-case'>>({})
   const [editedText, setEditedText] = useState<Record<string, string>>({})
   const [applyStates, setApplyStates] = useState<Record<string, ApplyState>>({})
+  const [editedEmailSubject, setEditedEmailSubject] = useState<Record<string, string>>({})
+  const [editedEmailBody, setEditedEmailBody] = useState<Record<string, string>>({})
+  const [markDoneStates, setMarkDoneStates] = useState<Record<string, MarkDoneState>>({})
 
   useEffect(() => {
     fetch('/api/fetch-feedback')
@@ -172,9 +182,49 @@ export default function Dashboard() {
       const data = await readJsonResponse(res)
       if (data.error) throw new Error(data.error)
       setTriages(t => ({ ...t, [key]: { status: 'done', data } }))
+      // Seed editable email subject + body from the AI draft.
+      setEditedEmailSubject(s => ({ ...s, [key]: data.emailSubject ?? '' }))
+      setEditedEmailBody(b => ({ ...b, [key]: data.emailResponse ?? '' }))
     } catch (e: any) {
       setTriages(t => ({ ...t, [key]: { status: 'error', message: e.message } }))
     }
+  }
+
+  async function markFeedbackDone(feedbackId: string) {
+    setMarkDoneStates(s => ({ ...s, [feedbackId]: { status: 'marking' } }))
+    try {
+      const res = await fetch('/api/mark-feedback-done', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ feedbackId, status: 'Done' }),
+      })
+      const data = await readJsonResponse(res)
+      if (data.error) throw new Error(data.error)
+      setMarkDoneStates(s => ({ ...s, [feedbackId]: { status: 'done', markedAt: data.markedAt } }))
+      // Remove the row from the list so the dashboard reflects Airtable's filter.
+      setItems(prev => prev.filter(i => i.feedback.id !== feedbackId))
+      // Pick the next item, if any.
+      setSelectedId(prev => {
+        if (prev !== feedbackId) return prev
+        const remaining = items.filter(i => i.feedback.id !== feedbackId)
+        return remaining[0]?.feedback.id ?? null
+      })
+    } catch (e: any) {
+      setMarkDoneStates(s => ({ ...s, [feedbackId]: { status: 'error', message: e.message } }))
+    }
+  }
+
+  function openInOutlook(to: string, subject: string, body: string) {
+    // Outlook Web App compose deeplink. Opens whichever mailbox is signed in
+    // (intended: info@scarevision.co.uk). Falls back to mailto: if the user
+    // isn't signed in — both work.
+    const params = new URLSearchParams({
+      to,
+      subject,
+      body,
+    })
+    const url = `https://outlook.office.com/mail/deeplink/compose?${params.toString()}`
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   async function generateRewrites(item: FeedbackItem) {
@@ -410,17 +460,37 @@ export default function Dashboard() {
                     <span className={styles.warnTag}>⚠ Case not found in base</span>
                   )}
                 </div>
-                <button
-                  className={styles.analyseBtn}
-                  onClick={() => runTriage(selectedItem)}
-                  disabled={selectedTriage.status === 'loading'}
-                >
-                  {selectedTriage.status === 'loading' ? (
-                    <><span className={styles.btnSpinner} /> Checking…</>
-                  ) : selectedTriage.status === 'done'
-                    ? '↺ Re-run triage'
-                    : '⚡ Check feedback'}
-                </button>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <button
+                    className={styles.analyseBtn}
+                    onClick={() => runTriage(selectedItem)}
+                    disabled={selectedTriage.status === 'loading'}
+                  >
+                    {selectedTriage.status === 'loading' ? (
+                      <><span className={styles.btnSpinner} /> Checking…</>
+                    ) : selectedTriage.status === 'done'
+                      ? '↺ Re-run triage'
+                      : '⚡ Check feedback'}
+                  </button>
+                  {(() => {
+                    const md = markDoneStates[selectedItem.feedback.id] ?? { status: 'idle' as const }
+                    return (
+                      <button
+                        className={styles.analyseBtn}
+                        onClick={() => markFeedbackDone(selectedItem.feedback.id)}
+                        disabled={md.status === 'marking' || md.status === 'done'}
+                        style={{ background: md.status === 'done' ? '#16a34a' : '#475569' }}
+                        title="Set the feedback row's Suggestion Status to Done in Airtable"
+                      >
+                        {md.status === 'marking' ? (
+                          <><span className={styles.btnSpinner} /> Marking…</>
+                        ) : md.status === 'done'
+                          ? '✓ Marked done'
+                          : '✓ Mark as done'}
+                      </button>
+                    )
+                  })()}
+                </div>
               </div>
 
               {/* Submitted feedback */}
@@ -768,26 +838,99 @@ export default function Dashboard() {
                     </div>
                   )}
 
-                  {/* Draft email */}
-                  {selectedItem.feedback.contactRegardingOutcome && (
-                    <div className={styles.section}>
-                      <div className={styles.emailHeader}>
-                        <span className={styles.sectionTitle}>Draft email response</span>
-                        <button
-                          className={styles.copyBtn}
-                          onClick={() =>
-                            copyEmail(selectedItem.feedback.id, selectedTriage.data.emailResponse)
-                          }
-                        >
-                          {copied[selectedItem.feedback.id] ? '✓ Copied' : 'Copy'}
-                        </button>
+                  {/* Draft email — editable subject + body, with Send via Outlook */}
+                  {selectedItem.feedback.contactRegardingOutcome && (() => {
+                    const fid = selectedItem.feedback.id
+                    const subject = editedEmailSubject[fid] ?? selectedTriage.data.emailSubject ?? ''
+                    const body = editedEmailBody[fid] ?? selectedTriage.data.emailResponse ?? ''
+                    const to = selectedItem.feedback.contactEmail || ''
+                    const noContact = subject.trim() === 'No contact requested'
+                    return (
+                      <div className={styles.section}>
+                        <div className={styles.emailHeader}>
+                          <span className={styles.sectionTitle}>Draft email response</span>
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            <button
+                              className={styles.copyBtn}
+                              onClick={() => copyEmail(fid, `Subject: ${subject}\n\n${body}`)}
+                            >
+                              {copied[fid] ? '✓ Copied' : 'Copy'}
+                            </button>
+                            <button
+                              className={styles.copyBtn}
+                              style={{ background: '#0078d4' }}
+                              onClick={() => openInOutlook(to, subject, body)}
+                              disabled={!to || noContact}
+                              title={
+                                !to
+                                  ? 'No contact email on the feedback row'
+                                  : noContact
+                                  ? 'Submitter did not request contact'
+                                  : `Open Outlook Web compose to ${to} (sends from your signed-in mailbox, e.g. info@scarevision.co.uk)`
+                              }
+                            >
+                              ✉ Open in Outlook
+                            </button>
+                          </div>
+                        </div>
+                        {to && <p className={styles.emailTo}>To: {to}</p>}
+                        <div style={{ marginBottom: 10 }}>
+                          <label
+                            style={{
+                              display: 'block',
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: 'var(--text-muted)',
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.8px',
+                              marginBottom: 4,
+                            }}
+                          >
+                            Subject
+                          </label>
+                          <input
+                            type="text"
+                            className={styles.contextTextarea}
+                            value={subject}
+                            onChange={e =>
+                              setEditedEmailSubject(s => ({ ...s, [fid]: e.target.value }))
+                            }
+                            style={{ fontFamily: 'inherit', fontSize: 14 }}
+                          />
+                        </div>
+                        <div>
+                          <label
+                            style={{
+                              display: 'block',
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: 'var(--text-muted)',
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.8px',
+                              marginBottom: 4,
+                            }}
+                          >
+                            Body
+                          </label>
+                          <textarea
+                            className={styles.contextTextarea}
+                            value={body}
+                            onChange={e =>
+                              setEditedEmailBody(b => ({ ...b, [fid]: e.target.value }))
+                            }
+                            rows={Math.max(8, body.split('\n').length + 1)}
+                            style={{ minHeight: 180, fontSize: 14, lineHeight: 1.6 }}
+                          />
+                        </div>
+                        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+                          Edit the subject and body above. "Open in Outlook" launches
+                          Outlook Web compose with this email pre-filled — make sure
+                          you're signed in as <strong>info@scarevision.co.uk</strong> so it
+                          sends from the right mailbox.
+                        </p>
                       </div>
-                      {selectedItem.feedback.contactEmail && (
-                        <p className={styles.emailTo}>To: {selectedItem.feedback.contactEmail}</p>
-                      )}
-                      <pre className={styles.emailText}>{selectedTriage.data.emailResponse}</pre>
-                    </div>
-                  )}
+                    )
+                  })()}
 
                   {/* Re-run triage box */}
                   <div className={styles.reanalyseBox}>

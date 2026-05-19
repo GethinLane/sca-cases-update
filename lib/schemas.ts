@@ -229,6 +229,7 @@ export const FEEDBACK_TRIAGE_SCHEMA = {
     'verdictSelfCheck',
     'verdict',
     'verdictReason',
+    'emailSubject',
     'emailResponse',
   ],
   properties: {
@@ -320,9 +321,14 @@ export const FEEDBACK_TRIAGE_SCHEMA = {
       type: 'string',
       description: 'One or two sentence plain-English explanation of the verdict.',
     },
+    emailSubject: {
+      type: 'string',
+      description:
+        'Subject line for the response email. Should reference the case number and the clinical topic in a short, professional way (e.g. "Re: Case 14 feedback — atrial fibrillation management"). If no contact was requested, set to exactly "No contact requested".',
+    },
     emailResponse: {
       type: 'string',
-      description: 'Draft email response, or exactly "No contact requested" if none needed.',
+      description: 'Draft email body, or exactly "No contact requested" if none needed.',
     },
   },
 } as const

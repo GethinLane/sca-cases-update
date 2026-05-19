@@ -243,6 +243,22 @@ export async function getFeedbackById(feedbackId: string): Promise<FeedbackRow |
   }
 }
 
+// Update the Suggestion Status of a User Feedback row.
+// Used by the "Mark as done" button so reviewed rows drop out of the
+// dashboard (which filters to Todo / empty status).
+export async function updateFeedbackStatus(
+  feedbackId: string,
+  status: 'Todo' | 'Done' | 'In progress',
+): Promise<void> {
+  const encoded = encodeURIComponent('User Feedback')
+  const url = `${AT_BASE}/${FEEDBACK_BASE_ID}/${encoded}/${feedbackId}`
+  await airtablePatch(
+    url,
+    { fields: { 'Suggestion Status': status }, typecast: true },
+    AIRTABLE_FEEDBACK_WRITE_TOKEN,
+  )
+}
+
 // ─── Transcripts (Users ai base → Attempts table) ─────────────────
 
 export interface TranscriptRow {

@@ -39,6 +39,7 @@ export interface FeedbackTriageResult {
     verdictRule: string
   }
   flaggedCells: FeedbackFlaggedCell[]
+  emailSubject: string
   emailResponse: string
 }
 
