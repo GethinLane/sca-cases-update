@@ -67,7 +67,7 @@ export function parseMarkdownToSections(markdown: string): ParsedSection[] {
 
   const flush = () => {
     if (currentHeading === null) return
-    const body = unescapeMammothBackslashes(currentBody.join('\n').trim())
+    const body = normaliseBodyText(currentBody.join('\n').trim())
     const section = buildSection(currentHeading, body)
     if (section) sections.push(section)
   }
@@ -116,6 +116,31 @@ function unescapeMammothBackslashes(s: string): string {
   return s.replace(/\\([\\`*_{}\[\]()#+\-.!|<>])/g, '$1')
 }
 
+// Mammoth emits bold runs as "__text__" and (sometimes) italic as "_text_".
+// Airtable's rich-text rendering recognises the asterisk variants
+// ("**bold**" / "*italic*") but not the underscore variants — so the
+// Assessment / Management long-text cells were landing in Airtable with
+// literal "__Definition.__" instead of rendering as bold. Convert to the
+// asterisk syntax so the markdown actually renders.
+//
+// Only convert pairs that look unambiguously like emphasis:
+// - "__…__" with no underscores in the run → bold
+// - "_word_" surrounded by non-word characters → italic
+// Single underscores inside words (snake_case, file_names) are left alone.
+function convertUnderscoreEmphasisToAsterisk(s: string): string {
+  let out = s.replace(/__([^_\n]+?)__/g, '**$1**')
+  out = out.replace(/(^|[^\w_])_([^_\n]+?)_(?=[^\w_]|$)/g, '$1*$2*')
+  return out
+}
+
+// One-stop normaliser for body text coming out of mammoth: undo defensive
+// escaping, then convert underscore-emphasis to asterisk-emphasis. Applied
+// to every section body and to each split item so the Airtable cells end
+// up with clean, renderable markdown.
+function normaliseBodyText(s: string): string {
+  return convertUnderscoreEmphasisToAsterisk(unescapeMammothBackslashes(s))
+}
+
 function buildSection(rawHeading: string, body: string): ParsedSection | null {
   const heading = rawHeading.trim()
 
@@ -140,17 +165,22 @@ function buildSection(rawHeading: string, body: string): ParsedSection | null {
   return { heading, items }
 }
 
-// Split a body into ordered items. Tries numbered-list format first
-// ("1. foo\n2. bar"), then falls back to blank-line-separated paragraphs.
-// Returns at least one item. We treat a single numbered item ("1. foo") as
-// a numbered list too so the leading "1. " gets stripped consistently.
+// Split a body into ordered items. Order of attempts:
+//   1. numbered list ("1. foo\n2. bar")
+//   2. bullet list ("- foo\n- bar" or "* foo\n* bar") — Word "bulleted list"
+//      style ends up here after mammoth conversion. Key Issue Curriculum
+//      Mapping in real cases is authored this way.
+//   3. blank-line-separated paragraphs.
+// Returns at least one item.
 function splitIntoItems(body: string): string[] {
   const lines = body.split('\n')
+
+  // 1. Numbered list. We treat even a single numbered item as a numbered
+  // list so the leading "1. " gets stripped consistently.
   const numberedStarts: number[] = []
   for (let i = 0; i < lines.length; i++) {
     if (/^\s*\d+\.\s+/.test(lines[i])) numberedStarts.push(i)
   }
-
   if (numberedStarts.length >= 1) {
     const items: string[] = []
     for (let j = 0; j < numberedStarts.length; j++) {
@@ -163,7 +193,26 @@ function splitIntoItems(body: string): string[] {
     if (items.length > 0) return items
   }
 
-  // Paragraphs separated by one-or-more blank lines.
+  // 2. Bullet list — "- item" or "* item". Bare "*" needs care because it
+  // could be the start of a bold marker "**text**" — require a single * /
+  // - followed by whitespace, not "**".
+  const bulletStarts: number[] = []
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*[-*](?!\*)\s+/.test(lines[i])) bulletStarts.push(i)
+  }
+  if (bulletStarts.length >= 1) {
+    const items: string[] = []
+    for (let j = 0; j < bulletStarts.length; j++) {
+      const start = bulletStarts[j]
+      const end = j + 1 < bulletStarts.length ? bulletStarts[j + 1] : lines.length
+      const raw = lines.slice(start, end).join('\n')
+      const stripped = raw.replace(/^\s*[-*]\s+/, '').trim()
+      if (stripped) items.push(stripped)
+    }
+    if (items.length > 0) return items
+  }
+
+  // 3. Paragraphs separated by one-or-more blank lines.
   const paragraphs = body
     .split(/\n\s*\n/)
     .map(p => p.trim())
