@@ -31,3 +31,7 @@ Thumbs.db
 
 # Vercel
 .vercel/
+
+# Local-only type stubs used during sandbox verification (registry blocked).
+# Real types come from @types/node, @types/react, next, etc. in production.
+types-stub.d.ts
