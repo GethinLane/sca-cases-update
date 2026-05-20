@@ -263,9 +263,11 @@ export async function listCaseTables(): Promise<CaseTableSummary[]> {
 // below them. Logic:
 //   1. List the table's existing rows (paginated).
 //   2. Sort by "Order" if present, otherwise by createdTime.
-//   3. If any of the rows we're about to overwrite already has data in
-//      a non-Order field AND the caller hasn't passed force=true, abort
-//      and report it so the UI can ask the user to confirm.
+//   3. Refuse outright if any row we'd overwrite has data in any non-
+//      template column. No prompt, no override — caller must clear the
+//      rows in Airtable before retrying. User explicitly asked for this
+//      hard guard: too easy to clobber a populated case by picking the
+//      wrong table from the dropdown.
 //   4. PATCH the first N existing rows with the N parsed rows.
 //   5. POST any extras (if parsed rows > existing rows).
 // Airtable caps both PATCH and POST at 10 records per request, so we chunk
@@ -275,20 +277,18 @@ export interface CreateCaseRecordsResult {
   updated: number
   recordIds: string[]
   errors: string[]
-  // Populated only when the call aborted on the non-empty-rows safety
-  // check (force was false and at least one row to be overwritten had
-  // data). Caller is expected to show a confirmation prompt and retry
-  // with force=true if the user agrees.
-  needsOverwriteConfirm?: {
+  // Populated only when the call was refused because target rows have
+  // existing user-authored content. No override available — caller has
+  // to clear those rows in Airtable and try again.
+  refusedOverwrite?: {
     nonEmptyRowCount: number
-    samplePreviews: string[]  // short text previews of the populated rows
+    samplePreviews: string[]
   }
 }
 
 export async function createCaseRecords(
   tableName: string,
   rows: Array<Record<string, string>>,
-  options: { force?: boolean } = {},
 ): Promise<CreateCaseRecordsResult> {
   const token = getCasesWriteToken()
   const encoded = encodeURIComponent(tableName)
@@ -332,22 +332,23 @@ export async function createCaseRecords(
     return a.createdTime.localeCompare(b.createdTime)
   })
 
-  // 3. Safety check — only the rows we'd actually overwrite (index < rows.length).
-  // Ignore the Order column (it's the template-set row number, every row has it).
-  if (!options.force) {
-    const overwritten = existing.slice(0, rows.length)
-    const nonEmpty = overwritten.filter(r => hasUserContent(r.fields))
-    if (nonEmpty.length > 0) {
-      return {
-        created: 0,
-        updated: 0,
-        recordIds: [],
-        errors: [],
-        needsOverwriteConfirm: {
-          nonEmptyRowCount: nonEmpty.length,
-          samplePreviews: nonEmpty.slice(0, 5).map(r => describeRow(r.fields)),
-        },
-      }
+  // 3. Hard refusal. Look at every existing row we'd overwrite (index <
+  // rows.length) and check whether any has user-authored content beyond
+  // the template-set Order column. If so, abort — no force flag, no
+  // override. Safer to make the user explicitly clear the table in
+  // Airtable than to risk silently losing a populated case.
+  const overwritten = existing.slice(0, rows.length)
+  const nonEmpty = overwritten.filter(r => hasUserContent(r.fields))
+  if (nonEmpty.length > 0) {
+    return {
+      created: 0,
+      updated: 0,
+      recordIds: [],
+      errors: [],
+      refusedOverwrite: {
+        nonEmptyRowCount: nonEmpty.length,
+        samplePreviews: nonEmpty.slice(0, 5).map(r => describeRow(r.fields)),
+      },
     }
   }
 
