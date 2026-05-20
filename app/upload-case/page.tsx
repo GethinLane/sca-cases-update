@@ -356,7 +356,7 @@ export default function CaseUploaderPage() {
     [sections, mapping],
   )
 
-  async function uploadRows(rows: Array<Record<string, string>>) {
+  async function uploadRows(rows: Array<Record<string, string>>, force = false) {
     if (!selectedTable) {
       setUploadError('Pick a target table first.')
       return
@@ -372,9 +372,32 @@ export default function CaseUploaderPage() {
       const res = await fetch('/api/case-upload/create-records', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tableName: selectedTable, rows }),
+        body: JSON.stringify({ tableName: selectedTable, rows, force }),
       })
       const data = await res.json()
+      // 409 with needsOverwriteConfirm — table's target rows have user
+      // data. Ask the user once, then retry with force=true if they say
+      // yes. Native window.confirm keeps the UX dead simple; if we ever
+      // want a richer modal we can swap it out here.
+      if (res.status === 409 && data.needsOverwriteConfirm) {
+        const previews = (data.samplePreviews ?? []) as string[]
+        const previewLine = previews.length
+          ? `\n\nExisting content:\n• ${previews.join('\n• ')}`
+          : ''
+        const ok = typeof window !== 'undefined' && window.confirm(
+          `${data.tableName} already has data in ${data.nonEmptyRowCount} row(s) ` +
+          `that this upload would overwrite.${previewLine}\n\nOverwrite anyway?`,
+        )
+        if (ok) {
+          await uploadRows(rows, true)
+        } else {
+          setUploadError(
+            `Upload cancelled — ${data.nonEmptyRowCount} existing row(s) in ` +
+            `${data.tableName} have data. Clear them in Airtable first, or pick a different table.`,
+          )
+        }
+        return
+      }
       if (!res.ok || (data.error && data.created === 0 && (data.updated ?? 0) === 0)) {
         throw new Error(data.error ?? `Upload failed (${res.status})`)
       }
