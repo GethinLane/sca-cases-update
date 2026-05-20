@@ -43,13 +43,41 @@ AIRTABLE_CASES_WRITE_TOKEN=pat...     # Write-scoped token for the Cases base (u
 ANTHROPIC_API_KEY=sk-ant-...          # Used by feedback triage (Sonnet) and draft rewrites (Opus)
 OPENAI_API_KEY=sk-...                 # Required for Transcript Insights (uses gpt-5.4)
 BLOB_READ_WRITE_TOKEN=vercel_blob_rw_...   # Vercel Blob — caches Stage 1 + Stage 2 results
+AUTH_SECRET=...                       # Generate with: openssl rand -base64 32  (or: npx auth secret)
+AUTH_GOOGLE_ID=...                    # Google OAuth client ID (see step 5b)
+AUTH_GOOGLE_SECRET=...                # Google OAuth client secret
+ALLOWED_EMAILS=alice@example.com,bob@example.com   # Comma-separated allowlist
 ```
+
+### 5b. Configure Google OAuth (one-time setup)
+
+The dashboard is protected by **Sign in with Google** + a per-email allowlist.
+Two-factor authentication is whatever your Google account enforces — turn on
+2-step verification at https://myaccount.google.com/security if it isn't
+already.
+
+1. Go to https://console.cloud.google.com/apis/credentials
+2. Create a project (or pick an existing one).
+3. Click **Create credentials → OAuth client ID → Web application**.
+4. Set **Authorised redirect URIs** to:
+   - `http://localhost:3000/api/auth/callback/google` (for local dev)
+   - `https://<your-vercel-domain>/api/auth/callback/google` (for production —
+     add this after your first Vercel deploy when you know the domain)
+5. Copy the **Client ID** into `AUTH_GOOGLE_ID` and **Client secret** into
+   `AUTH_GOOGLE_SECRET`.
+6. Fill `ALLOWED_EMAILS` with every Google email permitted to sign in
+   (comma-separated, case-insensitive). Anyone signing in with an email NOT
+   on this list is rejected even if Google authenticates them successfully.
+7. Generate `AUTH_SECRET` once with `openssl rand -base64 32` (or
+   `npx auth secret`). Use the **same** value in local dev and production —
+   changing it invalidates all sessions.
 
 ### 6. Run locally
 ```bash
 npm run dev
 ```
-Open http://localhost:3000
+Open http://localhost:3000 — you'll be redirected to `/login` and prompted
+to sign in with Google.
 
 ---
 
@@ -67,7 +95,19 @@ Open http://localhost:3000
    - `ANTHROPIC_API_KEY` (for triage + draft-rewrite endpoints)
    - `OPENAI_API_KEY` (for Transcript Insights)
    - `BLOB_READ_WRITE_TOKEN` (Vercel Blob — caches Stage 1 and Stage 2 results)
-4. Deploy — done!
+   - `AUTH_SECRET` (session-signing secret — same value as local)
+   - `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` (Google OAuth client)
+   - `ALLOWED_EMAILS` (comma-separated allowlist of permitted Google accounts)
+4. After the first deploy, copy the Vercel domain and add
+   `https://<that-domain>/api/auth/callback/google` to the Google OAuth
+   client's Authorised redirect URIs. Redeploy if needed.
+5. Done — visit the site and sign in with an allowlisted Google account.
+
+### Removing a user's access
+
+Delete their email from `ALLOWED_EMAILS` in Vercel env vars and redeploy.
+To force-revoke active sessions immediately, also rotate `AUTH_SECRET` —
+this invalidates every existing session, so everyone signs in again.
 
 ---
 
