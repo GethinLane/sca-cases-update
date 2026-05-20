@@ -136,6 +136,43 @@ export function parseMarkdownToSections(markdown: string): ParsedSection[] {
     })
   }
 
+  // Ensure every canonical SCA section appears in the output, even when
+  // it wasn't found in the source. The user can then type free text into
+  // the empty textarea for any section the docx didn't cover (Reaction
+  // is the common case — usually authored after upload rather than in
+  // the source file). Missing sections are added with a single empty
+  // item so the UI renders one editable row.
+  const presentByNorm = new Set(sections.map(s => normaliseForMatch(s.heading)))
+  for (const canonical of CANONICAL_SCA_HEADINGS) {
+    if (!presentByNorm.has(normaliseForMatch(canonical))) {
+      const iceMatch = canonical.match(/^ICE\s*:\s*(.+)$/i)
+      if (iceMatch) {
+        sections.push({
+          heading: canonical,
+          parentField: 'ICE',
+          subsection: iceMatch[1].trim(),
+          items: [''],
+        })
+      } else {
+        sections.push({ heading: canonical, items: [''] })
+      }
+    }
+  }
+
+  // Sort: canonical sections in canonical order, "Other / Unparsed
+  // Content" last. Non-canonical sections (shouldn't exist with the
+  // current parser, but defensive) slot between in their original order.
+  const canonicalIndex = new Map(
+    CANONICAL_SCA_HEADINGS.map((h, i) => [normaliseForMatch(h), i]),
+  )
+  sections.sort((a, b) => {
+    if (a.heading === OTHER_SECTION_HEADING) return 1
+    if (b.heading === OTHER_SECTION_HEADING) return -1
+    const ai = canonicalIndex.get(normaliseForMatch(a.heading)) ?? Infinity
+    const bi = canonicalIndex.get(normaliseForMatch(b.heading)) ?? Infinity
+    return ai - bi
+  })
+
   return sections
 }
 
@@ -387,6 +424,7 @@ export const CANONICAL_SCA_HEADINGS: readonly string[] = [
   'Assessment',
   'Management',
   'Application',
+  'Reaction',
   'Reference Labels',
   'Reference URLs',
   'Creation Date',
