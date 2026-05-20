@@ -26,6 +26,7 @@ interface CaseTableSummary {
 interface UploadResult {
   tableName: string
   created: number
+  updated: number
   recordIds: string[]
   errors: string[]
 }
@@ -374,12 +375,13 @@ export default function CaseUploaderPage() {
         body: JSON.stringify({ tableName: selectedTable, rows }),
       })
       const data = await res.json()
-      if (!res.ok || (data.error && data.created === 0)) {
+      if (!res.ok || (data.error && data.created === 0 && (data.updated ?? 0) === 0)) {
         throw new Error(data.error ?? `Upload failed (${res.status})`)
       }
       setUploadResult({
         tableName: data.tableName,
-        created: data.created,
+        created: data.created ?? 0,
+        updated: data.updated ?? 0,
         recordIds: data.recordIds ?? [],
         errors: data.errors ?? [],
       })
@@ -700,7 +702,10 @@ export default function CaseUploaderPage() {
             {uploadError && <div className={`${styles.flash} ${styles.flashErr}`}>{uploadError}</div>}
             {uploadResult && (
               <div className={`${styles.flash} ${uploadResult.errors.length === 0 ? styles.flashOk : styles.flashWarn}`}>
-                Created {uploadResult.created} row(s) in <strong>{uploadResult.tableName}</strong>.
+                {uploadResult.updated > 0 && `Updated ${uploadResult.updated} row(s)`}
+                {uploadResult.updated > 0 && uploadResult.created > 0 && ' and '}
+                {uploadResult.created > 0 && `created ${uploadResult.created} new row(s)`}
+                {' '}in <strong>{uploadResult.tableName}</strong>.
                 {uploadResult.errors.length > 0 && (
                   <>
                     <br />

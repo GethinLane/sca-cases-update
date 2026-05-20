@@ -257,46 +257,97 @@ export async function listCaseTables(): Promise<CaseTableSummary[]> {
     })
 }
 
-// Create one or more rows in a Case table. Airtable caps batch creates at 10
-// records per call, so we chunk and add a small inter-batch delay to stay
-// under the 5 req/sec limit.
+// Write parsed case rows into a Case table. SCA case tables ship with 8
+// pre-existing template rows (numbered by an "Order" column), so we need
+// to UPDATE those existing rows in order rather than creating new ones
+// below them. Logic:
+//   1. List the table's existing rows (paginated).
+//   2. Sort by "Order" if present, otherwise by createdTime.
+//   3. PATCH the first N existing rows with the N parsed rows.
+//   4. POST any extras (if parsed rows > existing rows).
+// Airtable caps both PATCH and POST at 10 records per request, so we chunk
+// and add a small inter-batch delay to stay under the 5 req/sec limit.
 export async function createCaseRecords(
   tableName: string,
   rows: Array<Record<string, string>>,
-): Promise<{ created: number; recordIds: string[]; errors: string[] }> {
+): Promise<{ created: number; updated: number; recordIds: string[]; errors: string[] }> {
   const token = getCasesWriteToken()
   const encoded = encodeURIComponent(tableName)
-  const url = `${AT_BASE}/${CASES_BASE_ID}/${encoded}`
+  const baseUrl = `${AT_BASE}/${CASES_BASE_ID}/${encoded}`
 
-  const errors: string[] = []
-  const recordIds: string[] = []
-  let created = 0
-
-  for (let i = 0; i < rows.length; i += 10) {
-    const chunk = rows.slice(i, i + 10).map(fields => ({ fields }))
-    try {
-      // typecast: true — let Airtable coerce values to match the column
-      // type. The most common case is the docx writing "29 years old" into
-      // a numeric Age column: Airtable will parse the digits out and store
-      // 29. Without typecast Airtable rejects the whole record with HTTP
-      // 422 "Field 'Age' cannot accept the provided value", which the user
-      // can't usefully recover from. Same reasoning for date columns
-      // ("5/19/2026") and single-selects.
-      const res = await airtablePost(url, { records: chunk, typecast: true }, token)
-      const created_records = Array.isArray(res.records) ? res.records : []
-      created += created_records.length
-      for (const r of created_records) {
-        if (r?.id) recordIds.push(String(r.id))
-      }
-    } catch (err: any) {
-      errors.push(err?.message ?? String(err))
+  // 1. List existing records. SCA case tables are small (≤8 rows in
+  // practice) but page defensively in case someone has extended one.
+  const existing: Array<{ id: string; createdTime: string; order?: number }> = []
+  let offset: string | undefined
+  do {
+    const params: string[] = ['pageSize=100']
+    if (offset) params.push(`offset=${encodeURIComponent(offset)}`)
+    const data = await airtableFetch(`${baseUrl}?${params.join('&')}`)
+    for (const r of (data.records || []) as any[]) {
+      const orderRaw = r?.fields?.Order
+      const order = typeof orderRaw === 'number' ? orderRaw : Number(orderRaw)
+      existing.push({
+        id: String(r.id),
+        createdTime: String(r.createdTime ?? ''),
+        order: Number.isFinite(order) ? order : undefined,
+      })
     }
-    if (i + 10 < rows.length) {
-      await new Promise(r => setTimeout(r, 300))
+    offset = data.offset
+  } while (offset)
+
+  // 2. Sort by Order if every existing row has one; otherwise by
+  // createdTime so we still get a stable mapping.
+  const allHaveOrder = existing.length > 0 && existing.every(r => r.order !== undefined)
+  existing.sort((a, b) => {
+    if (allHaveOrder) return (a.order ?? Infinity) - (b.order ?? Infinity)
+    return a.createdTime.localeCompare(b.createdTime)
+  })
+
+  // 3. Split incoming rows into updates (against existing) and creates.
+  const updates: Array<{ id: string; fields: Record<string, string> }> = []
+  const creates: Array<{ fields: Record<string, string> }> = []
+  for (let i = 0; i < rows.length; i++) {
+    if (i < existing.length) {
+      updates.push({ id: existing[i].id, fields: rows[i] })
+    } else {
+      creates.push({ fields: rows[i] })
     }
   }
 
-  return { created, recordIds, errors }
+  const errors: string[] = []
+  const recordIds: string[] = []
+  let updated = 0
+  let created = 0
+
+  // Batched PATCH for updates.
+  for (let i = 0; i < updates.length; i += 10) {
+    const chunk = updates.slice(i, i + 10)
+    try {
+      const res = await airtablePatch(baseUrl, { records: chunk, typecast: true }, token)
+      const out = Array.isArray(res.records) ? res.records : []
+      updated += out.length
+      for (const r of out) if (r?.id) recordIds.push(String(r.id))
+    } catch (err: any) {
+      errors.push(err?.message ?? String(err))
+    }
+    if (i + 10 < updates.length) await new Promise(r => setTimeout(r, 300))
+  }
+
+  // Batched POST for creates (anything beyond the existing row count).
+  for (let i = 0; i < creates.length; i += 10) {
+    const chunk = creates.slice(i, i + 10)
+    try {
+      const res = await airtablePost(baseUrl, { records: chunk, typecast: true }, token)
+      const out = Array.isArray(res.records) ? res.records : []
+      created += out.length
+      for (const r of out) if (r?.id) recordIds.push(String(r.id))
+    } catch (err: any) {
+      errors.push(err?.message ?? String(err))
+    }
+    if (i + 10 < creates.length) await new Promise(r => setTimeout(r, 300))
+  }
+
+  return { created, updated, recordIds, errors }
 }
 
 export async function getFeedbackById(feedbackId: string): Promise<FeedbackRow | null> {

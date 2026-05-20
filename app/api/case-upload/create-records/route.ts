@@ -61,15 +61,21 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await createCaseRecords(tableName, cleaned)
-    if (result.errors.length > 0 && result.created === 0) {
+    if (result.errors.length > 0 && result.created === 0 && result.updated === 0) {
       return NextResponse.json(
-        { error: result.errors.join('; '), created: 0, errors: result.errors },
+        {
+          error: result.errors.join('; '),
+          created: 0,
+          updated: 0,
+          errors: result.errors,
+        },
         { status: 502 },
       )
     }
     return NextResponse.json({
       tableName,
       created: result.created,
+      updated: result.updated,
       recordIds: result.recordIds,
       errors: result.errors,
     })
