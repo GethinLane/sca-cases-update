@@ -356,7 +356,7 @@ export default function CaseUploaderPage() {
     [sections, mapping],
   )
 
-  async function uploadRows(rows: Array<Record<string, string>>, force = false) {
+  async function uploadRows(rows: Array<Record<string, string>>) {
     if (!selectedTable) {
       setUploadError('Pick a target table first.')
       return
@@ -372,30 +372,22 @@ export default function CaseUploaderPage() {
       const res = await fetch('/api/case-upload/create-records', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tableName: selectedTable, rows, force }),
+        body: JSON.stringify({ tableName: selectedTable, rows }),
       })
       const data = await res.json()
-      // 409 with needsOverwriteConfirm — table's target rows have user
-      // data. Ask the user once, then retry with force=true if they say
-      // yes. Native window.confirm keeps the UX dead simple; if we ever
-      // want a richer modal we can swap it out here.
-      if (res.status === 409 && data.needsOverwriteConfirm) {
+      // Server refused the write because target rows already contain
+      // user data. Surface a clear error — no override; user has to
+      // clear the rows in Airtable manually.
+      if (res.status === 409 && data.refusedOverwrite) {
         const previews = (data.samplePreviews ?? []) as string[]
-        const previewLine = previews.length
-          ? `\n\nExisting content:\n• ${previews.join('\n• ')}`
+        const previewLines = previews.length
+          ? '\nExisting content found:\n• ' + previews.join('\n• ')
           : ''
-        const ok = typeof window !== 'undefined' && window.confirm(
-          `${data.tableName} already has data in ${data.nonEmptyRowCount} row(s) ` +
-          `that this upload would overwrite.${previewLine}\n\nOverwrite anyway?`,
+        setUploadError(
+          `Refused: ${data.tableName} already has data in ${data.nonEmptyRowCount} row(s). ` +
+          `Clear those rows in Airtable before uploading, or pick a different "Case N" table.` +
+          previewLines,
         )
-        if (ok) {
-          await uploadRows(rows, true)
-        } else {
-          setUploadError(
-            `Upload cancelled — ${data.nonEmptyRowCount} existing row(s) in ` +
-            `${data.tableName} have data. Clear them in Airtable first, or pick a different table.`,
-          )
-        }
         return
       }
       if (!res.ok || (data.error && data.created === 0 && (data.updated ?? 0) === 0)) {
@@ -722,7 +714,11 @@ export default function CaseUploaderPage() {
                 {uploading ? <><span className={styles.spinner} />Uploading…</> : `Upload all to ${selectedTable || '…'}`}
               </button>
             </div>
-            {uploadError && <div className={`${styles.flash} ${styles.flashErr}`}>{uploadError}</div>}
+            {uploadError && (
+              <div className={`${styles.flash} ${styles.flashErr}`} style={{ whiteSpace: 'pre-line' }}>
+                {uploadError}
+              </div>
+            )}
             {uploadResult && (
               <div className={`${styles.flash} ${uploadResult.errors.length === 0 ? styles.flashOk : styles.flashWarn}`}>
                 {uploadResult.updated > 0 && `Updated ${uploadResult.updated} row(s)`}
