@@ -12,6 +12,10 @@ export const maxDuration = 60
 interface RequestBody {
   tableName?: string
   rows?: Array<Record<string, string>>
+  // When true, skip the "target rows already contain user data" safety
+  // check. Caller (the UI) sets this only after the user has confirmed
+  // they want to overwrite.
+  force?: boolean
 }
 
 const MAX_ROWS = 16  // Defensive; real cases use up to 8.
@@ -60,16 +64,35 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await createCaseRecords(tableName, cleaned)
-    if (result.errors.length > 0 && result.created === 0) {
+    const result = await createCaseRecords(tableName, cleaned, { force: body.force === true })
+    // Safety check tripped — target rows have data, ask the user to
+    // confirm via the UI before retrying with force=true.
+    if (result.needsOverwriteConfirm) {
       return NextResponse.json(
-        { error: result.errors.join('; '), created: 0, errors: result.errors },
+        {
+          needsOverwriteConfirm: true,
+          tableName,
+          nonEmptyRowCount: result.needsOverwriteConfirm.nonEmptyRowCount,
+          samplePreviews: result.needsOverwriteConfirm.samplePreviews,
+        },
+        { status: 409 },
+      )
+    }
+    if (result.errors.length > 0 && result.created === 0 && result.updated === 0) {
+      return NextResponse.json(
+        {
+          error: result.errors.join('; '),
+          created: 0,
+          updated: 0,
+          errors: result.errors,
+        },
         { status: 502 },
       )
     }
     return NextResponse.json({
       tableName,
       created: result.created,
+      updated: result.updated,
       recordIds: result.recordIds,
       errors: result.errors,
     })
