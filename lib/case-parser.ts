@@ -410,8 +410,12 @@ function matchInlineCanonicalHeading(
   // Strip leading wrapping bold/italic so we can match "**Explanation**"
   // as well as plain "Explanation" at the start of the line.
   const noLeadWrap = trimmed.replace(/^(?:\*\*|__|\*|_)+/, '')
-  for (const [keyLower, canonical] of canonicalByLower) {
-    // Build a regex like /^Explanation\*\*?(?:[:.\-—–]|  +)\s*(.+)$/i
+  // Use Map.prototype.forEach so we avoid the ES5-target restriction on
+  // iterating Map entries with for...of. Have to use a mutable hit variable
+  // because forEach can't be early-exited.
+  let hit: { canonical: string; body: string } | null = null
+  canonicalByLower.forEach((canonical) => {
+    if (hit) return
     const escaped = canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const re = new RegExp(
       `^${escaped}(?:\\*\\*|__|\\*|_)*\\s*(?:[:.\\-—–]|  +)\\s*(.+)$`,
@@ -419,11 +423,10 @@ function matchInlineCanonicalHeading(
     )
     const m = noLeadWrap.match(re)
     if (m && m[1].trim().length > 5) {
-      void keyLower
-      return { canonical, body: m[1].trim() }
+      hit = { canonical, body: m[1].trim() }
     }
-  }
-  return null
+  })
+  return hit
 }
 
 export function projectSectionsToRows(
