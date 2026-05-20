@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "next": "latest",
+    "next-auth": "^5.0.0-beta.25",
     "react": "^18",
     "react-dom": "^18",
     "@vercel/blob": "latest",
