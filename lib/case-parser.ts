@@ -73,22 +73,35 @@ export function parseMarkdownToSections(markdown: string): ParsedSection[] {
   }
 
   for (const line of lines) {
-    // Case 1: any markdown heading "#", "##", "###" — we don't care which
-    // level mammoth chose for SCA fields. Strip wrapping bold/italic that
-    // mammoth puts inside the heading and canonicalise via wording match.
+    // Section breaks are wording-driven: ONLY a line whose text matches a
+    // canonical SCA heading counts as a section boundary. Any other markdown
+    // heading — "## Definition", "### Epidemiology", "**Red flags**" — is
+    // treated as body content and stays inside the current section.
+    //
+    // This is what the user explicitly asked for: long-form fields like
+    // Assessment / Management / Application / Explanation often have
+    // internal Word Heading 2 / Heading 3 sub-headings (Definition,
+    // Epidemiology, Red flags…) which should NOT become separate Airtable
+    // rows. They belong inside the parent section's single textarea.
+    let canonicalHit: string | null = null
+
+    // First try: extract heading text from a "#" / "##" / "###" markdown
+    // heading and canonicalise. If the heading text matches a canonical SCA
+    // name, it's a section break. If it doesn't, the line falls through to
+    // body.
     const m = line.match(/^#+\s+(.+?)\s*$/)
     if (m) {
-      flush()
-      currentHeading = cleanHeadingText(m[1])
-      currentBody = []
-      continue
+      canonicalHit = canonicaliseHeading(cleanHeadingText(m[1]))
     }
-    // Case 2: standalone line whose wording matches a canonical SCA heading
-    // (e.g. mammoth couldn't recognise the paragraph as a Heading 2 because
-    // the style name was lowercased, so it emits the heading as just bold
-    // body text). Matching purely on wording means we recover the section
-    // regardless of how it was formatted in the docx.
-    const canonicalHit = canonicaliseHeading(cleanHeadingText(line))
+
+    // Second try: a standalone line (no "#") whose wording matches a
+    // canonical SCA heading. Catches headings mammoth emits as plain bold
+    // paragraphs ("__Patient Name__") because the docx didn't use the
+    // proper Heading 2 style.
+    if (!canonicalHit) {
+      canonicalHit = canonicaliseHeading(cleanHeadingText(line))
+    }
+
     if (canonicalHit) {
       flush()
       currentHeading = canonicalHit
@@ -331,15 +344,10 @@ function canonicaliseHeading(s: string): string | null {
 
 // Promote text lines that visually look like SCA headings (because the
 // author bold/large-formatted them by hand instead of using Word's
-// "Heading 2" style) into actual markdown ## headings. mammoth only
-// recognises Word's built-in heading styles, so anything hand-formatted
-// comes out as plain text and gets vacuumed up into the previous section.
-//
-// We only promote lines whose text EXACTLY matches a canonical SCA heading
-// (case-insensitive, after stripping any bold/italic markdown emphasis
-// mammoth wraps around them). That avoids false positives — random body
-// prose won't accidentally match a 30+ character heading like
-// "Data Gathering: Positive Indicators".
+// "Heading 2" style) into actual markdown ## headings, AND split any line
+// where a canonical heading appears at the start followed by body content
+// on the same line (which can happen when mammoth merges a heading
+// paragraph with its body in certain docx structures).
 //
 // Returns the new markdown and the list of headings that were promoted so
 // the UI can surface "we recovered N headings that weren't properly styled".
@@ -351,19 +359,74 @@ export function promoteCanonicalHeadings(markdown: string): {
     CANONICAL_SCA_HEADINGS.map(h => [h.toLowerCase(), h]),
   )
   const lines = markdown.split('\n')
+  const out: string[] = []
   const promoted: string[] = []
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    if (/^#+\s/.test(line.trim())) continue        // already a markdown heading
-    const stripped = cleanHeadingText(line)
-    if (!stripped) continue
-    const hit = canonicalByLower.get(stripped.toLowerCase())
-    if (hit) {
-      lines[i] = `## ${hit}`
-      promoted.push(hit)
+
+  for (const original of lines) {
+    if (/^#+\s/.test(original.trim())) { out.push(original); continue }
+
+    // Pass 1: standalone canonical heading text (no body on same line).
+    const stripped = cleanHeadingText(original)
+    if (stripped) {
+      const hit = canonicalByLower.get(stripped.toLowerCase())
+      if (hit) {
+        out.push(`## ${hit}`)
+        promoted.push(hit)
+        continue
+      }
     }
+
+    // Pass 2: canonical heading text at line start followed by body
+    // content on the same line. Defensive against mammoth occasionally
+    // merging a heading paragraph with its following body paragraph —
+    // we split them back into a "## heading" + "body" on separate lines
+    // so the parser sees both. Requires either a separator character
+    // (colon, period, em-dash) OR multiple spaces between the heading
+    // and the body so we don't false-positive on body text that happens
+    // to start with a canonical word ("Application of NICE guidelines…").
+    const inline = matchInlineCanonicalHeading(original, canonicalByLower)
+    if (inline) {
+      out.push(`## ${inline.canonical}`)
+      out.push('')
+      out.push(inline.body)
+      promoted.push(inline.canonical)
+      continue
+    }
+
+    out.push(original)
   }
-  return { markdown: lines.join('\n'), promotedHeadings: promoted }
+
+  return { markdown: out.join('\n'), promotedHeadings: promoted }
+}
+
+// Try to match "<canonical><separator><body>" at the start of a line.
+// Returns { canonical, body } if found, null otherwise.
+function matchInlineCanonicalHeading(
+  line: string,
+  canonicalByLower: Map<string, string>,
+): { canonical: string; body: string } | null {
+  const trimmed = line.trim()
+  if (!trimmed) return null
+  // Strip leading wrapping bold/italic so we can match "**Explanation**"
+  // as well as plain "Explanation" at the start of the line.
+  const noLeadWrap = trimmed.replace(/^(?:\*\*|__|\*|_)+/, '')
+  // Use Map.prototype.forEach so we avoid the ES5-target restriction on
+  // iterating Map entries with for...of. Have to use a mutable hit variable
+  // because forEach can't be early-exited.
+  let hit: { canonical: string; body: string } | null = null
+  canonicalByLower.forEach((canonical) => {
+    if (hit) return
+    const escaped = canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(
+      `^${escaped}(?:\\*\\*|__|\\*|_)*\\s*(?:[:.\\-—–]|  +)\\s*(.+)$`,
+      'i',
+    )
+    const m = noLeadWrap.match(re)
+    if (m && m[1].trim().length > 5) {
+      hit = { canonical, body: m[1].trim() }
+    }
+  })
+  return hit
 }
 
 export function projectSectionsToRows(
