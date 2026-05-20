@@ -159,11 +159,55 @@ function convertUnderscoreEmphasisToAsterisk(s: string): string {
 }
 
 // One-stop normaliser for body text coming out of mammoth: undo defensive
-// escaping, then convert underscore-emphasis to asterisk-emphasis. Applied
-// to every section body and to each split item so the Airtable cells end
-// up with clean, renderable markdown.
+// backslash escaping, then convert underscore-emphasis to asterisk-emphasis
+// so Airtable's rich-text rendering picks it up. Applied to every section
+// body BEFORE the per-field markdown-strip decision, so the strip pass
+// sees a clean canonical form regardless of mammoth's wrapping choices.
 function normaliseBodyText(s: string): string {
   return convertUnderscoreEmphasisToAsterisk(unescapeMammothBackslashes(s))
+}
+
+// Fields where the markdown formatting (bold sub-labels, bullet lists,
+// inline emphasis) is the POINT — they're long-form clinical write-ups
+// that go into rich-text Airtable cells and we want the rendering. Every
+// OTHER section gets stripped back to plain text, per user request.
+const PRESERVE_MARKDOWN_FIELDS = new Set<string>([
+  'Assessment',
+  'Management',
+])
+
+// Aggressively strip everything that looks like markdown or inline HTML
+// from a string, leaving plain text. Used for every cell whose target
+// field isn't in PRESERVE_MARKDOWN_FIELDS — so Patient Name doesn't
+// arrive as "**Jessica Chen**" and Notes Entry doesn't arrive with
+// stray bullets / hash markers.
+function stripMarkdown(s: string): string {
+  return s
+    // Images first (so the alt text survives), then links.
+    .replace(/!\[([^\]]*?)\]\([^)]+?\)/g, '$1')
+    .replace(/\[([^\]]+?)\]\([^)]+?\)/g, '$1')
+    // Bold and italic — both * and _ variants. Italic regex is bounded
+    // by non-word characters so snake_case identifiers in URLs etc.
+    // don't get mangled.
+    .replace(/\*\*([^*\n]+?)\*\*/g, '$1')
+    .replace(/__([^_\n]+?)__/g, '$1')
+    .replace(/(^|[^\w*])\*([^*\n]+?)\*(?!\w)/g, '$1$2')
+    .replace(/(^|[^\w_])_([^_\n]+?)_(?!\w)/g, '$1$2')
+    // Strikethrough and inline code.
+    .replace(/~~([^~\n]+?)~~/g, '$1')
+    .replace(/`([^`\n]+?)`/g, '$1')
+    // Heading, blockquote and list markers at the start of any line.
+    .replace(/^#+\s+/gm, '')
+    .replace(/^\s*>\s+/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    // HTML tags — <br>, <u>, <b>, <i>, <em>, <strong>, etc.
+    .replace(/<\/?[a-z][^>]*>/gi, '')
+    // Tidy whitespace: drop trailing spaces on each line, collapse
+    // runs of three+ newlines down to a paragraph break, trim ends.
+    .split('\n').map(l => l.trimEnd()).join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
 }
 
 function buildSection(rawHeading: string, body: string): ParsedSection | null {
@@ -182,6 +226,13 @@ function buildSection(rawHeading: string, body: string): ParsedSection | null {
     if (!isCanonical) return null
   }
 
+  // Decide whether to keep the markdown formatting in this section's cells.
+  // Only Assessment and Management are rich-text long-forms that benefit
+  // from the bold/italic/list markdown; every other section gets stripped
+  // back to plain text per user request.
+  const preserveMd = PRESERVE_MARKDOWN_FIELDS.has(heading)
+  const clean = (s: string) => (preserveMd ? s : stripMarkdown(s))
+
   // ICE: <Subsection> — pin to a specific row of the ICE field.
   const iceMatch = heading.match(/^ICE\s*:\s*(.+)$/i)
   if (iceMatch) {
@@ -189,12 +240,12 @@ function buildSection(rawHeading: string, body: string): ParsedSection | null {
       heading,
       parentField: 'ICE',
       subsection: iceMatch[1].trim(),
-      items: [body],
+      items: [clean(body)],
     }
   }
 
   const isListField = KNOWN_LIST_FIELDS.has(heading)
-  const items = isListField ? splitIntoItems(body) : [body]
+  const items = (isListField ? splitIntoItems(body) : [body]).map(clean)
   return { heading, items }
 }
 
@@ -344,10 +395,16 @@ function canonicaliseHeading(s: string): string | null {
 
 // Promote text lines that visually look like SCA headings (because the
 // author bold/large-formatted them by hand instead of using Word's
-// "Heading 2" style) into actual markdown ## headings, AND split any line
-// where a canonical heading appears at the start followed by body content
-// on the same line (which can happen when mammoth merges a heading
-// paragraph with its body in certain docx structures).
+// "Heading 2" style) into actual markdown ## headings. mammoth only
+// recognises Word's built-in heading styles, so anything hand-formatted
+// comes out as plain text and gets vacuumed up into the previous section.
+//
+// We only promote lines whose text EXACTLY matches a canonical SCA
+// heading (case-insensitive, after stripping any bold/italic markdown
+// wrapping). Inline bold sub-labels inside a paragraph — e.g.
+// "**Past Medical History:** Nil of note…" inside the PMH/Meds/Allergies
+// section — don't match because the line has body content past the bold
+// run, so they correctly stay as body text.
 //
 // Returns the new markdown and the list of headings that were promoted so
 // the UI can surface "we recovered N headings that weren't properly styled".
@@ -359,74 +416,19 @@ export function promoteCanonicalHeadings(markdown: string): {
     CANONICAL_SCA_HEADINGS.map(h => [h.toLowerCase(), h]),
   )
   const lines = markdown.split('\n')
-  const out: string[] = []
   const promoted: string[] = []
-
-  for (const original of lines) {
-    if (/^#+\s/.test(original.trim())) { out.push(original); continue }
-
-    // Pass 1: standalone canonical heading text (no body on same line).
-    const stripped = cleanHeadingText(original)
-    if (stripped) {
-      const hit = canonicalByLower.get(stripped.toLowerCase())
-      if (hit) {
-        out.push(`## ${hit}`)
-        promoted.push(hit)
-        continue
-      }
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (/^#+\s/.test(line.trim())) continue        // already a markdown heading
+    const stripped = cleanHeadingText(line)
+    if (!stripped) continue
+    const hit = canonicalByLower.get(stripped.toLowerCase())
+    if (hit) {
+      lines[i] = `## ${hit}`
+      promoted.push(hit)
     }
-
-    // Pass 2: canonical heading text at line start followed by body
-    // content on the same line. Defensive against mammoth occasionally
-    // merging a heading paragraph with its following body paragraph —
-    // we split them back into a "## heading" + "body" on separate lines
-    // so the parser sees both. Requires either a separator character
-    // (colon, period, em-dash) OR multiple spaces between the heading
-    // and the body so we don't false-positive on body text that happens
-    // to start with a canonical word ("Application of NICE guidelines…").
-    const inline = matchInlineCanonicalHeading(original, canonicalByLower)
-    if (inline) {
-      out.push(`## ${inline.canonical}`)
-      out.push('')
-      out.push(inline.body)
-      promoted.push(inline.canonical)
-      continue
-    }
-
-    out.push(original)
   }
-
-  return { markdown: out.join('\n'), promotedHeadings: promoted }
-}
-
-// Try to match "<canonical><separator><body>" at the start of a line.
-// Returns { canonical, body } if found, null otherwise.
-function matchInlineCanonicalHeading(
-  line: string,
-  canonicalByLower: Map<string, string>,
-): { canonical: string; body: string } | null {
-  const trimmed = line.trim()
-  if (!trimmed) return null
-  // Strip leading wrapping bold/italic so we can match "**Explanation**"
-  // as well as plain "Explanation" at the start of the line.
-  const noLeadWrap = trimmed.replace(/^(?:\*\*|__|\*|_)+/, '')
-  // Use Map.prototype.forEach so we avoid the ES5-target restriction on
-  // iterating Map entries with for...of. Have to use a mutable hit variable
-  // because forEach can't be early-exited.
-  let hit: { canonical: string; body: string } | null = null
-  canonicalByLower.forEach((canonical) => {
-    if (hit) return
-    const escaped = canonical.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const re = new RegExp(
-      `^${escaped}(?:\\*\\*|__|\\*|_)*\\s*(?:[:.\\-—–]|  +)\\s*(.+)$`,
-      'i',
-    )
-    const m = noLeadWrap.match(re)
-    if (m && m[1].trim().length > 5) {
-      hit = { canonical, body: m[1].trim() }
-    }
-  })
-  return hit
+  return { markdown: lines.join('\n'), promotedHeadings: promoted }
 }
 
 export function projectSectionsToRows(
