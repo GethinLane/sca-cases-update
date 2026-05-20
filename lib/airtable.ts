@@ -400,13 +400,27 @@ export async function createCaseRecords(
 }
 
 // Does this row have any user-authored data beyond the template-set
-// "Order" column? Used to decide whether overwriting would destroy real
-// content. Treats Airtable's computed/formula-ish columns
-// (Created/Modified Time) as also non-meaningful by name.
+// row-number / Airtable computed columns? Used to decide whether
+// overwriting would destroy real content. Matching is case-insensitive
+// so "Order" / "order" / "ORDER" all count as the template column.
+function isTemplateOrComputedField(name: string): boolean {
+  const lc = name.toLowerCase().trim()
+  return (
+    lc === 'order' ||
+    lc === 'row' ||
+    lc === 'row order' ||
+    lc === '#' ||
+    lc === 'autonumber' ||
+    lc === 'created time' ||
+    lc === 'last modified time' ||
+    lc === 'created at' ||
+    lc === 'modified at'
+  )
+}
+
 function hasUserContent(fields: Record<string, unknown>): boolean {
-  const IGNORE = new Set(['Order', 'Created Time', 'Last Modified Time'])
   for (const k of Object.keys(fields)) {
-    if (IGNORE.has(k)) continue
+    if (isTemplateOrComputedField(k)) continue
     const v = fields[k]
     if (v == null) continue
     if (typeof v === 'string' && v.trim() === '') continue
@@ -417,9 +431,9 @@ function hasUserContent(fields: Record<string, unknown>): boolean {
 }
 
 // Best-effort human-readable description of an existing row, used in the
-// overwrite-confirm dialog so the user can recognise what they're about
+// overwrite-refusal message so the user can recognise what they're about
 // to clobber. Prefers Name/Patient Name fields; falls back to the first
-// populated text field.
+// populated text field, skipping the template/computed columns.
 function describeRow(fields: Record<string, unknown>): string {
   const PREFERRED = ['Patient Name', 'Name', 'Notes Entry Label']
   for (const k of PREFERRED) {
@@ -427,7 +441,7 @@ function describeRow(fields: Record<string, unknown>): string {
     if (typeof v === 'string' && v.trim()) return `${k}: ${v.slice(0, 60)}`
   }
   for (const k of Object.keys(fields)) {
-    if (k === 'Order') continue
+    if (isTemplateOrComputedField(k)) continue
     const v = fields[k]
     if (typeof v === 'string' && v.trim()) return `${k}: ${v.slice(0, 60)}`
     if (typeof v === 'number') return `${k}: ${v}`
