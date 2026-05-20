@@ -47,6 +47,12 @@ function guessFieldForHeading(
 ): string | undefined {
   if (realFields.length === 0) return undefined
 
+  // The parser's safety-net "Other / Unparsed Content" section deliberately
+  // has no canonical Airtable equivalent — it's a catch-all the user can
+  // review and choose to drop. Don't try to fuzzy-match it against any
+  // real field; that would put unparsed-preamble text into the wrong cell.
+  if (/^Other\s*\/\s*Unparsed/i.test(heading)) return undefined
+
   // ICE: <Subsection> headings always map to a single "ICE" field.
   if (/^ICE\s*:/i.test(heading)) {
     const ice = realFields.find(f => f.toLowerCase() === 'ice')

@@ -64,6 +64,13 @@ export function parseMarkdownToSections(markdown: string): ParsedSection[] {
   const sections: ParsedSection[] = []
   let currentHeading: string | null = null
   let currentBody: string[] = []
+  // Safety net: anything that appears in the document BEFORE we hit the
+  // first canonical heading goes here. This includes the case-file title,
+  // any preamble notes, and any non-canonical headings the author added
+  // before the structured SCA content begins. We surface it as a final
+  // "Other / Unparsed Content" section so nothing in the docx is silently
+  // dropped — user explicitly asked for this safety net.
+  const preamble: string[] = []
 
   const flush = () => {
     if (currentHeading === null) return
@@ -108,12 +115,34 @@ export function parseMarkdownToSections(markdown: string): ParsedSection[] {
       currentBody = []
       continue
     }
-    if (currentHeading !== null) currentBody.push(line)
+    if (currentHeading !== null) {
+      currentBody.push(line)
+    } else {
+      // Pre-first-canonical content goes into the safety-net buffer.
+      preamble.push(line)
+    }
   }
   flush()
 
+  // Surface preamble (anything before the first canonical heading) as a
+  // trailing "Other" section so the user can review/keep/drop it. Strip
+  // mammoth escapes + underscore-emphasis first, then strip markdown so
+  // the textarea shows clean plain text.
+  const preambleText = normaliseBodyText(preamble.join('\n').trim())
+  if (preambleText) {
+    sections.push({
+      heading: OTHER_SECTION_HEADING,
+      items: [stripMarkdown(preambleText)],
+    })
+  }
+
   return sections
 }
+
+// Heading label for the safety-net section that holds content the parser
+// couldn't fit into a canonical SCA section. Exported so the UI can flag
+// the section visually and the auto-mapper can skip it.
+export const OTHER_SECTION_HEADING = 'Other / Unparsed Content'
 
 // Strip wrapping bold/italic markers and unescape mammoth's backslash
 // escaping. Then, if the cleaned text matches a canonical SCA heading via

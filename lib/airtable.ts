@@ -275,10 +275,14 @@ export async function createCaseRecords(
   for (let i = 0; i < rows.length; i += 10) {
     const chunk = rows.slice(i, i + 10).map(fields => ({ fields }))
     try {
-      // typecast: false — surface schema mismatches loudly rather than
-      // silently dropping fields. Caller has already mapped headings to real
-      // field names via the Metadata API, so a mismatch is a real bug.
-      const res = await airtablePost(url, { records: chunk, typecast: false }, token)
+      // typecast: true — let Airtable coerce values to match the column
+      // type. The most common case is the docx writing "29 years old" into
+      // a numeric Age column: Airtable will parse the digits out and store
+      // 29. Without typecast Airtable rejects the whole record with HTTP
+      // 422 "Field 'Age' cannot accept the provided value", which the user
+      // can't usefully recover from. Same reasoning for date columns
+      // ("5/19/2026") and single-selects.
+      const res = await airtablePost(url, { records: chunk, typecast: true }, token)
       const created_records = Array.isArray(res.records) ? res.records : []
       created += created_records.length
       for (const r of created_records) {
